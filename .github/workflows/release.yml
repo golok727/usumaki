@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v1.2.3). Leave empty to build only without publishing a release.'
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -90,6 +96,7 @@ jobs:
     name: Create GitHub Release
     needs: [build]
     runs-on: ubuntu-latest
+    if: github.event_name == 'push' || inputs.tag != ''
 
     steps:
       - uses: actions/checkout@v4
@@ -102,6 +109,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
           generate_release_notes: true
           files: |
             artifacts/windows-x64/uzumaki-windows-x64.zip

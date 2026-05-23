@@ -2,17 +2,15 @@
   "productName": "{{PROJECT_NAME}}",
   "version": "0.1.0",
   "identifier": "{{IDENTIFIER}}",
-  "build": {
-    "command": "bun build src/index.tsx --target node --outdir dist --minify --external uzumaki"
-  },
   "jsxImportSource": "uzumaki-react",
-  "pack": {
-    "jsDist": "./dist",
-    "entry": "index.js",
+  "beforeBuildCommand": "uzumaki run build.ts",
+  "bundle": {
+    "resources": ["assets/**/*"],
+    "js": {
+      "rootDir": "./dist",
+      "entry": "index.js"
+    },
     "outputDir": "./target",
     "binName": "{{PROJECT_NAME}}"
-  },
-  "bundle": {
-    "resources": ["assets/**/*"]
   }
 }

@@ -1,7 +1,7 @@
+use crate::cursor::UzCursorIcon;
 use crate::node::UzNodeId;
 
-use crate::style::{Bounds, UzStyle, UzStyleRefinement};
-use refineable::Refineable;
+use crate::style::{Bounds, ScrollbarStyle, UzStyleRefinement};
 use vello::kurbo::{Affine, Point};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -156,114 +156,40 @@ fn transformed_axis_aligned_bounds(bounds: Bounds, transform: Affine) -> Bounds 
     Bounds::new(min_x, min_y, max_x - min_x, max_y - min_y)
 }
 
-/// Holds the style states for an interactive element.
-/// Elements embed this struct and delegate styling through it.
-#[derive(Default)]
-pub struct StyleVariants {
-    /// Base style refinement (always applied).
-    pub base_style: UzStyleRefinement,
-    /// Applied when the element's hitbox is hovered.
-    pub hover_style: Option<Box<UzStyleRefinement>>,
-    /// Applied when the element's hitbox is active (mouse pressed on it).
-    pub active_style: Option<Box<UzStyleRefinement>>,
-    /// Applied when the element has keyboard focus.
-    pub focus_style: Option<Box<UzStyleRefinement>>,
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub(crate) enum StyleSlot {
+    Base,
+    Hover,
+    Active,
+    Focus,
 }
 
-impl StyleVariants {
-    pub fn new() -> Self {
-        Self::default()
-    }
+#[derive(Default)]
+pub struct Interactivity {
+    pub cursor: Option<UzCursorIcon>,
 
-    /// Compute the final Style for this element by starting with the base style
-    /// and refining with hover/active/focus styles based on interaction state.
-    /// `focused` should be true iff this node currently holds keyboard focus.
-    pub fn compute_style(
-        &self,
-        base: &UzStyle,
-        node_id: UzNodeId,
-        hit_state: &HitTestState,
-        focused: bool,
-    ) -> UzStyle {
-        let mut style = base.clone();
+    pub base_style: Box<UzStyleRefinement>,
+    pub hover_style: Option<Box<UzStyleRefinement>>,
+    pub active_style: Option<Box<UzStyleRefinement>>,
+    pub focus_style: Option<Box<UzStyleRefinement>>,
 
-        // Apply base style refinement
-        style.refine(&self.base_style);
+    // not used yet
+    pub scrollbar: ScrollbarStyle,
+}
 
-        // Hover/active state must be keyed by the stable DOM node identity, not the
-        // paint-frame hitbox ID, otherwise a redraw between mouse down/up breaks clicks.
-        if hit_state.is_hovered(node_id)
-            && let Some(hover) = &self.hover_style
-        {
-            style.refine(hover);
+impl Interactivity {
+    pub(crate) fn style_for(&mut self, variant: StyleSlot) -> &mut UzStyleRefinement {
+        match variant {
+            StyleSlot::Hover => self
+                .hover_style
+                .get_or_insert_with(|| Box::new(UzStyleRefinement::default())),
+            StyleSlot::Active => self
+                .active_style
+                .get_or_insert_with(|| Box::new(UzStyleRefinement::default())),
+            StyleSlot::Focus => self
+                .focus_style
+                .get_or_insert_with(|| Box::new(UzStyleRefinement::default())),
+            StyleSlot::Base => &mut self.base_style,
         }
-
-        if hit_state.is_active(node_id)
-            && let Some(active) = &self.active_style
-        {
-            style.refine(active);
-        }
-
-        if focused && let Some(focus) = &self.focus_style {
-            style.refine(focus);
-        }
-
-        // Default focus ring when focused and no explicit outline was set
-        // anywhere in the cascade.
-        if focused && style.outline.is_none() {
-            style.outline = Some(crate::style::Outline::FOCUS_RING);
-        }
-
-        style
-    }
-
-    pub fn compute_style_inherited(
-        &self,
-        base: &UzStyle,
-        parent: &UzStyle,
-        node_id: UzNodeId,
-        hit_state: &HitTestState,
-        focused: bool,
-    ) -> UzStyle {
-        let mut style = base.clone();
-        style.inherit_from(parent);
-        style.refine(&self.base_style);
-
-        if hit_state.is_hovered(node_id)
-            && let Some(hover) = &self.hover_style
-        {
-            style.refine(hover);
-        }
-
-        if hit_state.is_active(node_id)
-            && let Some(active) = &self.active_style
-        {
-            style.refine(active);
-        }
-
-        if focused && let Some(focus) = &self.focus_style {
-            style.refine(focus);
-        }
-
-        if focused && style.outline.is_none() {
-            style.outline = Some(crate::style::Outline::FOCUS_RING);
-        }
-
-        style
-    }
-
-    /// Set the hover style refinement.
-    pub fn on_hover(&mut self, style: UzStyleRefinement) {
-        self.hover_style = Some(Box::new(style));
-    }
-
-    /// Set the active (pressed) style refinement.
-    pub fn on_active(&mut self, style: UzStyleRefinement) {
-        self.active_style = Some(Box::new(style));
-    }
-
-    /// Set the focus style refinement.
-    pub fn on_focus(&mut self, style: UzStyleRefinement) {
-        self.focus_style = Some(Box::new(style));
     }
 }

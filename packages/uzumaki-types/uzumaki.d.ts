@@ -15,6 +15,7 @@ declare module 'uzumaki' {
     height: number;
   }
   type WindowTheme = 'light' | 'dark' | 'system';
+  type ResolvedTheme = 'light' | 'dark';
   type WindowLevel = 'normal' | 'alwaysOnTop' | 'alwaysOnBottom';
   interface WindowOptions {
     width?: number;
@@ -39,7 +40,8 @@ declare module 'uzumaki' {
     closable?: boolean;
     minimizable?: boolean;
     maximizable?: boolean;
-    rootStyles?: Record<string, unknown>;
+    rootStyles?: Record<string, string | number | boolean>;
+    vars?: Record<string, string>;
   }
   interface AppPath {
     readonly resourceDir: string;
@@ -54,6 +56,10 @@ declare module 'uzumaki' {
   }
   //#endregion
   //#region js/core.d.ts
+  declare const CoreNode: CoreNodeConstructor;
+  interface CoreNodeConstructor {
+    new (windowId: number, nodeId: NodeId): CoreNode;
+  }
   interface CoreNode {
     readonly id: NodeId;
     readonly windowId: number;
@@ -70,9 +76,7 @@ declare module 'uzumaki' {
     removeChild(child: CoreNode): void;
     remove(): void;
     removeChildren(): void;
-    setStrAttribute(name: string, value: string): void;
-    setNumberAttribute(name: string, value: number): void;
-    setBoolAttribute(name: string, value: boolean): void;
+    setAttribute(name: string, value: string): void;
     removeAttribute(name: string): void;
     getAttribute(name: string): unknown;
   }
@@ -82,7 +86,6 @@ declare module 'uzumaki' {
     protected readonly _native: CoreNode;
     readonly window: Window;
     constructor(window: Window, native: CoreNode);
-    static fromNodeId(window: Window, nodeId: NodeId | null): UzNode | null;
     get nodeId(): NodeId;
     get windowId(): number;
     get nodeType(): number;
@@ -97,11 +100,10 @@ declare module 'uzumaki' {
     insertBefore<T extends UzNode>(child: T, before: UzNode | null): T;
     removeChild<T extends UzNode>(child: T): T;
     /**
-     * Detach this node from its parent
+     * Detach this node from its parent.
      */
     remove(): void;
     removeChildren(): void;
-    destroy(): void;
   }
   declare class UzTextNode extends UzNode {
     constructor(window: Window, text: string);
@@ -129,7 +131,6 @@ declare module 'uzumaki' {
       options?: ListenerOptions,
     ): void;
     emit<K extends keyof M>(name: K, event: M[K]): boolean;
-    _listenerCount<K extends keyof M>(name: K): number;
   }
   //#endregion
   //#region js/events.d.ts
@@ -199,6 +200,14 @@ declare module 'uzumaki' {
     readonly width: number;
     readonly height: number;
   }
+  interface UzThemeChangeEvent<
+    T extends UzNode = UzNode,
+  > extends UzumakiEvent<T> {
+    /** The effective theme after resolving `system` against the OS. */
+    readonly theme: ResolvedTheme;
+    /** The window's theme preference that produced `theme`. */
+    readonly preference: WindowTheme;
+  }
   /** DOM-style events that can be attached to any element. */
   interface UzEventMap {
     mousemove: UzMouseEvent;
@@ -220,6 +229,7 @@ declare module 'uzumaki' {
     load: UzumakiEvent;
     close: UzumakiEvent;
     resize: UzumakiResizeEvent;
+    themechange: UzThemeChangeEvent;
   }
   type EventName = keyof UzEventMap;
   type WindowEventName = keyof WindowEventMap;
@@ -271,11 +281,10 @@ declare module 'uzumaki' {
     ): void;
     emit<K extends keyof M>(name: K, event: M[K]): boolean;
     focus(): void;
-    setAttribute(name: string, value: unknown): void;
-    setAttributes(attributes: Record<string, unknown>): void;
+    setAttribute(name: string, value: string | number | boolean): void;
+    setAttributes(attributes: Record<string, number | string | boolean>): void;
     removeAttribute(name: string): void;
     getAttribute(name: string): unknown;
-    destroy(): void;
   }
   //#endregion
   //#region js/elements/root.d.ts
@@ -322,16 +331,10 @@ declare module 'uzumaki' {
   }
   declare class UzImageElement extends UzElement<ImageEventMap> {
     private _generation;
-    private _disposed;
     private _src;
     constructor(window: Window);
     get src(): string | undefined;
     set src(value: string | undefined | null);
-    private _load;
-    private _loadAsync;
-    private _safeEmit;
-    private _isCurrent;
-    destroy(): void;
   }
   //#endregion
   //#region js/elements/input.d.ts
@@ -373,6 +376,7 @@ declare module 'uzumaki' {
   }
   //#endregion
   //#region js/window.d.ts
+  type AnimationFrameCallback = (timestamp: number) => void;
   declare const ELEMENT_CONSTRUCTORS: {
     view: typeof UzViewElement;
     text: typeof UzTextElement;
@@ -393,10 +397,14 @@ declare module 'uzumaki' {
     private _disposed;
     private _disposables;
     private _root;
+    private _nextAnimationFrameHandle;
+    private _animationFrameCallbacks;
+    private _animationFramePendingNotified;
+    private _themePreference;
+    private _systemTheme;
     constructor(label: string, attributes?: WindowOptions);
     close(): void;
     addDisposable(cb: () => void): void;
-    static _getById(id: number): Window | undefined;
     set title(title: string);
     set decorations(decorations: boolean);
     set visible(visible: boolean);
@@ -409,9 +417,13 @@ declare module 'uzumaki' {
     setMinSize(width: number, height: number): void;
     setMaxSize(width: number, height: number): void;
     setPosition(x: number, y: number): void;
-    set theme(theme: WindowTheme);
+    set theme(preference: WindowTheme);
     focus(): void;
     requestRedraw(): void;
+    setVar(key: string, value: string | null): void;
+    setVars(patch: Record<string, string | null | undefined>): void;
+    requestAnimationFrame(callback: AnimationFrameCallback): number;
+    cancelAnimationFrame(handle: number): void;
     set contentProtected(contentProtected: boolean);
     set closable(closable: boolean);
     set minimizable(minimizable: boolean);
@@ -433,7 +445,12 @@ declare module 'uzumaki' {
     get innerSize(): WindowSize | null;
     get outerSize(): WindowSize | null;
     get position(): WindowPosition | null;
-    get theme(): WindowTheme | null;
+    get theme(): WindowTheme;
+    /**
+     * The effective theme after resolving a `system` preference against the OS.
+     * Always `light` or `dark`. Track changes with the `themechange` event.
+     */
+    get resolvedTheme(): ResolvedTheme;
     get active(): boolean | null;
     get contentProtected(): boolean;
     get closable(): boolean;
@@ -458,14 +475,17 @@ declare module 'uzumaki' {
       handler: WindowEventHandler<K>,
       options?: ListenerOptions,
     ): void;
+    private _maybeEmitThemeChange;
+    private _clearAnimationFrameCallbacks;
+    private _syncAnimationFramePending;
+    private _setAnimationFramePending;
   }
   declare function getWindow(label: string): Window | undefined;
-  declare function __internalDebugNodeCount(windowId: number): number;
   //#endregion
   //#region js/clipboard.d.ts
   declare const Clipboard: {
-    readText(): string | null;
-    writeText(text: string): boolean;
+    readText(): Promise<string | null>;
+    writeText(text: string): Promise<boolean>;
   };
   //#endregion
   //#region js/runtime.d.ts
@@ -474,6 +494,24 @@ declare module 'uzumaki' {
       path: AppPath;
     };
   }
+  /**
+   * Build a theme ref object from a map of tokens.
+   *
+   * Returns `{ vars, theme }`. Pass `vars` to a window's `vars` option (or
+   * `window.setVars(...)`); use `theme.token` anywhere a style prop value is
+   * expected. Values that start with `$` are looked up from the window's
+   * theme at paint time.
+   *
+   * @example
+   * const { vars, theme } = defineVars({ bg: '#0a0a0a', text: '#e4e4e7' });
+   * new Window('main', { vars, rootStyles: { bg: theme.bg, color: theme.text } });
+   */
+  declare function defineVars<T extends Record<string, string>>(
+    tokens: T,
+  ): {
+    vars: T;
+    theme: { [K in keyof T]: string };
+  };
   declare const RUNTIME_VERSION: number;
   //#endregion
   export {
@@ -514,7 +552,7 @@ declare module 'uzumaki' {
     type WindowPosition,
     type WindowSize,
     type WindowTheme,
-    __internalDebugNodeCount,
+    defineVars,
     getWindow,
   };
 }

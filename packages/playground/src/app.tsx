@@ -11,6 +11,7 @@ import { EventsPage } from './pages/eventsPage';
 import { IssuesPage } from './pages/issuesPage';
 import { ImagesPage } from './pages/imagesPage';
 import { TimerPage } from './pages/timerPage';
+import { ClipboardPage } from './pages/clipboardPage';
 import { ShikiPage } from './pages/codeHighlight';
 
 export function App() {
@@ -26,6 +27,7 @@ export function App() {
     issues: <IssuesPage />,
     images: <ImagesPage />,
     timer: <TimerPage />,
+    clipboard: <ClipboardPage />,
     shiki: <ShikiPage />,
   }[activeTab];
 

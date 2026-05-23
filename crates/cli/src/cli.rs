@@ -7,11 +7,12 @@ use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 
 use crate::standalone;
-use crate::ui;
+use crate::utils;
 use uzumaki_runtime::AppConfig;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const GITHUB_REPO: &str = "golok727/uzumaki";
+const CONFIG_FILE_NAME: &str = "uzumaki.config.json";
 #[derive(Debug, serde::Deserialize)]
 pub struct UzumakiConfig {
     #[serde(rename = "productName")]
@@ -20,10 +21,8 @@ pub struct UzumakiConfig {
     pub identifier: String,
     #[serde(default, rename = "jsxImportSource")]
     pub jsx_import_source: Option<String>,
-    #[serde(default)]
-    pub build: BuildConfig,
-    #[serde(default)]
-    pub pack: PackConfig,
+    #[serde(default, rename = "beforeBuildCommand")]
+    pub before_build_command: Option<String>,
     #[serde(default)]
     pub bundle: BundleConfig,
 }
@@ -34,18 +33,8 @@ pub struct BundleConfig {
     /// Resolved relative to the config file's directory.
     #[serde(default)]
     pub resources: Vec<String>,
-}
-
-#[derive(Debug, Default, serde::Deserialize)]
-pub struct BuildConfig {
-    pub command: Option<String>,
-}
-
-#[derive(Debug, Default, serde::Deserialize)]
-pub struct PackConfig {
-    #[serde(rename = "jsDist")]
-    pub js_dist: Option<String>,
-    pub entry: Option<String>,
+    #[serde(default)]
+    pub js: BundleJsConfig,
     #[serde(rename = "outputDir")]
     pub output_dir: Option<String>,
     #[serde(rename = "binName")]
@@ -54,10 +43,46 @@ pub struct PackConfig {
     pub base_binary: Option<String>,
 }
 
+#[derive(Debug, Default, serde::Deserialize)]
+pub struct BundleJsConfig {
+    #[serde(rename = "rootDir")]
+    pub root_dir: Option<String>,
+    pub entry: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn config_parse_should_accept_bundle_without_before_build_command() {
+        let config: UzumakiConfig = serde_json::from_str(
+            r#"{
+                "productName": "demo",
+                "version": "0.1.0",
+                "identifier": "com.example.demo",
+                "bundle": {
+                    "js": {
+                        "rootDir": "./dist",
+                        "entry": "index.js"
+                    },
+                    "outputDir": "./target"
+                }
+            }"#,
+        )
+        .expect("config should parse");
+
+        assert!(config.before_build_command.is_none());
+        assert_eq!(config.bundle.js.root_dir.as_deref(), Some("./dist"));
+        assert_eq!(config.bundle.js.entry.as_deref(), Some("index.js"));
+        assert_eq!(config.bundle.output_dir.as_deref(), Some("./target"));
+    }
+}
+
 fn find_config(start: &Path) -> Option<PathBuf> {
     let mut dir = start.to_path_buf();
     loop {
-        let candidate = dir.join("uzumaki.config.json");
+        let candidate = dir.join(CONFIG_FILE_NAME);
         if candidate.is_file() {
             return Some(candidate);
         }
@@ -180,13 +205,14 @@ pub fn run_cli() -> Result<Option<standalone::LaunchMode>> {
         return Ok(None);
     }
 
-    let matches = if should_parse_subcommand_first() {
-        clap_root().get_matches()
+    let cmd = clap_root();
+    let matches = if is_root_invocation(&cmd) {
+        cmd.get_matches()
     } else {
         let raw_args: Vec<String> = std::env::args().collect();
         let mut patched = vec![raw_args[0].clone(), "dev".to_string()];
         patched.extend_from_slice(&raw_args[1..]);
-        clap_root().get_matches_from(patched)
+        cmd.get_matches_from(patched)
     };
     let cli = Cli::from_arg_matches(&matches)?;
 
@@ -224,11 +250,15 @@ pub fn run_cli() -> Result<Option<standalone::LaunchMode>> {
     }
 }
 
-fn should_parse_subcommand_first() -> bool {
-    matches!(
-        std::env::args().nth(1).as_deref(),
-        Some("dev" | "run" | "build" | "init" | "create" | "upgrade")
-    )
+fn is_root_invocation(cmd: &Command) -> bool {
+    let Some(arg1) = std::env::args().nth(1) else {
+        return true;
+    };
+    if arg1.starts_with('-') {
+        return true;
+    }
+    cmd.get_subcommands()
+        .any(|sc| sc.get_name() == arg1 || sc.get_all_aliases().any(|a| a == arg1))
 }
 
 fn should_print_root_help() -> bool {
@@ -240,68 +270,68 @@ fn should_print_root_help() -> bool {
 fn print_root_help() {
     println!(
         "{} is a desktop UI runtime for Javascript / TypeScript. (v{})",
-        ui::brand("Uzumaki"),
+        utils::brand("Uzumaki"),
         VERSION
     );
     println!();
     println!("Usage: uzumaki [ENTRY] [ARGS]... [COMMAND]");
     println!();
-    println!("{}", ui::bold("Commands:"));
+    println!("{}", utils::bold("Commands:"));
 
-    ui::print_help_command(
-        ui::purple("dev"),
+    utils::print_help_command(
+        utils::purple("dev"),
         Some("./app.tsx"),
         "Run a file in the interactive runtime",
     );
-    ui::print_help_command(
-        ui::purple("run"),
+    utils::print_help_command(
+        utils::purple("run"),
         Some("./script.ts"),
         "Run a file in headless mode",
     );
 
     println!();
 
-    ui::print_help_command(
-        ui::yellow("build"),
+    utils::print_help_command(
+        utils::yellow("build"),
         Some(""),
         "Build and package an app using uzumaki.config.json",
     );
 
     println!();
 
-    ui::print_help_command(
-        ui::teal("init"),
+    utils::print_help_command(
+        utils::teal("init"),
         Some(""),
-        "Initialize the current directory as a new project",
+        "Initialize a project in the current directory",
     );
-    ui::print_help_command(
-        ui::teal("create"),
+    utils::print_help_command(
+        utils::teal("create"),
         Some("[name]"),
-        "Create a new project, prompting when the name is omitted",
+        "Create a new project",
     );
 
     println!();
 
-    ui::print_help_command(
-        ui::cyan("upgrade"),
+    utils::print_help_command(
+        utils::cyan("upgrade"),
         Some(""),
         "Upgrade to the latest version",
     );
 
     println!();
-    println!("{}", ui::bold("Options:"));
-    println!("  {:<10} Print help text", ui::muted("-h, --help"));
-    println!("  {:<10} Print version", ui::muted("-V, --version"));
+    println!("{}", utils::bold("Options:"));
+    println!("  {:<10} Print help text", utils::muted("-h, --help"));
+    println!("  {:<10} Print version", utils::muted("-V, --version"));
     println!();
     println!("  uzumaki --help           Print help text for the root command.");
     println!(
         "  uzumaki {} --help Print help text for a command.",
-        ui::muted("<command>")
+        utils::muted("<command>")
     );
     println!();
     println!(
         "{} https://github.com/golok727/uzumaki",
-        ui::muted("GitHub:")
+        utils::muted("GitHub:")
     );
 }
 
@@ -376,52 +406,54 @@ fn cmd_build(config_path: Option<&str>, no_build: bool) -> Result<()> {
             p
         }
         None => find_config(&cwd).ok_or_else(|| {
-            anyhow::anyhow!("could not find uzumaki.config.json from {}", cwd.display())
+            anyhow::anyhow!("could not find {CONFIG_FILE_NAME} from {}", cwd.display())
         })?,
     };
 
     let config_dir = config_file.parent().unwrap().to_path_buf();
     let config = load_config(&config_file)?;
 
-    if !no_build && let Some(ref cmd) = config.build.command {
-        ui::print_status("build", cmd);
+    if !no_build && let Some(ref cmd) = config.before_build_command {
+        utils::print_status("build", cmd);
         let status = run_shell_command(cmd, &config_dir)?;
         if !status.success() {
             bail!("build command failed with exit code {}", status);
         }
     }
 
-    // Pack
+    // Package
     let js_dist = config
-        .pack
-        .js_dist
+        .bundle
+        .js
+        .root_dir
         .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("missing pack.jsDist in config"))?;
+        .ok_or_else(|| anyhow::anyhow!("missing bundle.js.rootDir in config"))?;
     let entry = config
-        .pack
+        .bundle
+        .js
         .entry
         .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("missing pack.entry in config"))?;
+        .ok_or_else(|| anyhow::anyhow!("missing bundle.js.entry in config"))?;
     let output_dir_raw = config
-        .pack
+        .bundle
         .output_dir
         .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("missing pack.outputDir in config"))?;
+        .ok_or_else(|| anyhow::anyhow!("missing bundle.outputDir in config"))?;
 
     let js_dist_path = resolve_from(&config_dir, js_dist);
     let output_dir = resolve_from(&config_dir, output_dir_raw);
     let bin_name = config
-        .pack
+        .bundle
         .bin_name
         .clone()
         .unwrap_or_else(|| config.product_name.clone());
     let output_path = normalize_output_extension(&output_dir.join(&bin_name));
-    let base_binary = match &config.pack.base_binary {
+    let base_binary = match &config.bundle.base_binary {
         Some(b) => resolve_from(&config_dir, b),
         None => std::env::current_exe()?,
     };
 
-    ui::print_status("pack", format!("{js_dist} -> {}", output_path.display()));
+    utils::print_status("package", format!("{js_dist} -> {}", output_path.display()));
 
     let final_output = standalone::pack::pack_app(&standalone::pack::PackOptions {
         dist_dir: js_dist_path,
@@ -479,7 +511,7 @@ fn copy_bundle_resources(base: &Path, patterns: &[String], resources_dir: &Path)
         }
 
         if !matched {
-            ui::print_warning("bundle resource", format!("{pattern} matched nothing"));
+            utils::print_warning("bundle resource", format!("{pattern} matched nothing"));
         }
     }
     Ok(())
@@ -505,7 +537,7 @@ fn copy_path(src: &Path, dest: &Path) -> Result<()> {
 }
 
 fn cmd_upgrade(target_version: Option<&str>) -> Result<()> {
-    ui::print_status("upgrade", "checking for updates...");
+    utils::print_status("upgrade", "checking for updates...");
 
     let version_tag = match target_version {
         Some(v) => {
@@ -538,9 +570,9 @@ fn cmd_upgrade(target_version: Option<&str>) -> Result<()> {
     let version_num = version_tag.strip_prefix('v').unwrap_or(&version_tag);
 
     if version_num == VERSION {
-        ui::print_status(
+        utils::print_status(
             "upgrade",
-            format!("{} (v{VERSION})", ui::success("already up to date")),
+            format!("{} (v{VERSION})", utils::success("already up to date")),
         );
         return Ok(());
     }
@@ -549,7 +581,7 @@ fn cmd_upgrade(target_version: Option<&str>) -> Result<()> {
     let download_url =
         format!("https://github.com/{GITHUB_REPO}/releases/download/{version_tag}/{asset_name}");
 
-    ui::print_status(
+    utils::print_status(
         "upgrade",
         format!("downloading v{VERSION} -> v{version_num}"),
     );
@@ -584,8 +616,8 @@ fn cmd_upgrade(target_version: Option<&str>) -> Result<()> {
             let filled = (pct as usize) / 2;
             eprint!(
                 "\r{} {} [{:█<filled$}{:·<empty$}] {pct}%",
-                ui::brand("uzumaki"),
-                ui::muted("upgrade"),
+                utils::brand("uzumaki"),
+                utils::muted("upgrade"),
                 "",
                 "",
                 filled = filled,
@@ -602,9 +634,9 @@ fn cmd_upgrade(target_version: Option<&str>) -> Result<()> {
     let current_exe = std::env::current_exe()?;
     replace_exe(&current_exe, &binary_bytes)?;
 
-    ui::print_status(
+    utils::print_status(
         "upgrade",
-        format!("{} v{version_num}", ui::success("updated to")),
+        format!("{} v{version_num}", utils::success("updated to")),
     );
 
     Ok(())

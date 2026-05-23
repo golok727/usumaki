@@ -22,7 +22,7 @@ Open `src/index.tsx`. The shape should feel familiar:
 
 ```tsx
 import { Window } from 'uzumaki';
-import { render } from 'uzumaki-react';
+import { createRoot } from 'uzumaki-react';
 
 const window = new Window('main', {
   width: 900,
@@ -30,10 +30,11 @@ const window = new Window('main', {
   title: 'My App',
 });
 
-render(window, <App />);
+const root = createRoot(window);
+root.render(<App />);
 ```
 
-`Window` comes from the built-in `uzumaki` module. `render` comes from `uzumaki-react`, the adapter that lets React manage Uzumaki elements.
+`Window` comes from the built-in `uzumaki` module. `createRoot` comes from `uzumaki-react`, the adapter that lets React manage Uzumaki elements. It returns a root with `render` and `unmount` methods — keep the root around if you want to re-render later (HMR does this for you).
 
 :::note[Not React-only]
 Uzumaki supports custom adapters. React is just the first one we ship — Solid, Vue, and Svelte are on the roadmap. The rest of these docs use React.
@@ -46,7 +47,7 @@ Replace the app component with a small counter:
 ```tsx
 import { useState } from 'react';
 import { Window } from 'uzumaki';
-import { render } from 'uzumaki-react';
+import { createRoot } from 'uzumaki-react';
 
 const window = new Window('main', {
   width: 900,
@@ -94,7 +95,8 @@ function App() {
   );
 }
 
-render(window, <App />);
+const root = createRoot(window);
+root.render(<App />);
 ```
 
 These tags are Uzumaki elements:

@@ -1,4 +1,4 @@
-import { isValidElement as isReactElement } from 'react';
+import { createElement, isValidElement as isReactElement } from 'react';
 import ReactReconciler, { type EventPriority } from 'react-reconciler';
 import { DefaultEventPriority } from 'react-reconciler/constants.js';
 
@@ -18,6 +18,7 @@ import {
   resetText,
   unhide,
 } from './host';
+import { WindowProvider } from './window-context';
 
 /**
  * Get text content of a <text> node. will throw an error if you nest a react element inside this
@@ -144,13 +145,11 @@ function createReconciler() {
 
     removeChild(parent, child) {
       if (parent.window.isDisposed) return;
-      child.destroy();
       parent.removeChild(child);
     },
 
     removeChildFromContainer(window, child) {
       if (window.isDisposed) return;
-      child.destroy();
       window.root.removeChild(child);
     },
 
@@ -170,9 +169,7 @@ function createReconciler() {
       commitText(instance, newText);
     },
 
-    detachDeletedInstance(instance) {
-      instance.destroy();
-    },
+    detachDeletedInstance() {},
 
     hideInstance(instance) {
       hide(instance);
@@ -242,10 +239,15 @@ function createReconciler() {
   });
 }
 
-export function render(window: Window, element: JSX.Element) {
+export interface Root {
+  render(element: JSX.Element | null): void;
+  unmount(): void;
+}
+
+export function createRoot(window: Window): Root {
   const reconciler = createReconciler();
 
-  const root = reconciler.createContainer(
+  const container = reconciler.createContainer(
     window,
     1,
     null,
@@ -258,15 +260,28 @@ export function render(window: Window, element: JSX.Element) {
     () => {},
   );
 
-  reconciler.updateContainer(element, root, null, null);
+  let unmounted = false;
 
-  function dispose() {
-    reconciler.updateContainer(null, root, null, null);
+  function unmount() {
+    if (unmounted) return;
+    unmounted = true;
+    reconciler.updateContainer(null, container, null, null);
   }
 
-  window.addDisposable(dispose);
+  window.addDisposable(unmount);
 
   return {
-    dispose,
+    render(element) {
+      if (unmounted) {
+        throw new Error('[uzumaki] cannot render into an unmounted root');
+      }
+      reconciler.updateContainer(
+        createElement(WindowProvider, { window } as never, element),
+        container,
+        null,
+        null,
+      );
+    },
+    unmount,
   };
 }

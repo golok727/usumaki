@@ -176,7 +176,7 @@ pub fn bold<S: fmt::Display>(s: S) -> Style<S> {
 
 pub fn dimmed_gray<S: fmt::Display>(s: S) -> Style<S> {
     let mut style_spec = ColorSpec::new();
-    style_spec.set_fg(Some(Ansi256(243))).set_dimmed(true);
+    style_spec.set_fg(Some(Ansi256(245))).set_dimmed(true);
     style(s, style_spec)
 }
 

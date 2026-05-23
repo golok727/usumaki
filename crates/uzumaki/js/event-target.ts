@@ -87,6 +87,7 @@ export class UzEventTarget<M extends Record<string, any>> {
     return this._entries.size > 0;
   }
 
+  /** @internal */
   _listenerCount<K extends keyof M>(name: K): number {
     return this._entries.get(name)?.length ?? 0;
   }

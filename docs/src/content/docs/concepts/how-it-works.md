@@ -17,10 +17,11 @@ Everything else (React, the renderer, layout) is built on top of those three.
 
 ```tsx
 import { Window } from 'uzumaki';
-import { render } from 'uzumaki-react';
+import { createRoot } from 'uzumaki-react';
 
 const window = new Window('main', { width: 900, height: 620 });
-render(window, <App />);
+const root = createRoot(window);
+root.render(<App />);
 ```
 
 `Window` is not the browser `window`. It is an OS-level window you create, move, resize, and listen to. The first argument is a label so you can look it up later with `getWindow('main')`.
@@ -118,7 +119,7 @@ You import it like any package, but you do not install it from npm. Uzumaki prov
 
 Putting it together:
 
-1. Your entry file creates a `Window` and calls `render(window, <App />)`.
+1. Your entry file creates a `Window`, then `const root = createRoot(window); root.render(<App />)`.
 2. `uzumaki-react` walks your JSX and creates the matching Uzumaki elements under the window's root.
 3. Uzumaki lays them out and paints them.
 4. The user clicks. Uzumaki dispatches an event up the element tree to your handler.

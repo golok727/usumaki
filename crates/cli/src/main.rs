@@ -1,7 +1,7 @@
 pub mod cli;
 pub mod init;
 pub mod standalone;
-pub mod ui;
+pub mod utils;
 
 use anyhow::{Context, Result};
 use uzumaki_runtime::{AppConfig, Application};
@@ -22,7 +22,7 @@ fn main() {
     }
 
     if let Err(err) = run() {
-        ui::print_error(&err);
+        utils::print_error(&err);
         std::process::exit(1);
     }
 }

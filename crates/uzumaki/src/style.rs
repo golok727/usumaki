@@ -93,6 +93,17 @@ impl Bounds {
     pub fn to_rect(&self) -> Rect {
         Rect::new(self.x, self.y, self.x + self.width, self.y + self.height)
     }
+
+    /// Inset by an `Edges` (e.g. `style.padding`) to produce the inner box.
+    /// Width/height clamp at zero.
+    pub fn inset_by(&self, edges: &Edges) -> Bounds {
+        Bounds::new(
+            self.x + edges.left as f64,
+            self.y + edges.top as f64,
+            (self.width - edges.horizontal() as f64).max(0.0),
+            (self.height - edges.vertical() as f64).max(0.0),
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Refineable)]
@@ -116,6 +127,14 @@ impl Edges {
 
     pub fn any_nonzero(&self) -> bool {
         self.top > 0.0 || self.right > 0.0 || self.bottom > 0.0 || self.left > 0.0
+    }
+
+    pub fn horizontal(&self) -> f32 {
+        self.left + self.right
+    }
+
+    pub fn vertical(&self) -> f32 {
+        self.top + self.bottom
     }
 }
 
@@ -349,6 +368,35 @@ impl FontWeight {
             Self::Black => parley::FontWeight::BLACK,
         }
     }
+
+    pub fn from_f16(value: u16) -> Option<Self> {
+        match value {
+            100 => Some(Self::Thin),
+            200 => Some(Self::ExtraLight),
+            300 => Some(Self::Light),
+            400 => Some(Self::Regular),
+            500 => Some(Self::Medium),
+            600 => Some(Self::SemiBold),
+            700 => Some(Self::Bold),
+            800 => Some(Self::ExtraBold),
+            900 => Some(Self::Black),
+            _ => None,
+        }
+    }
+
+    pub fn as_f16(weight: FontWeight) -> u16 {
+        match weight {
+            FontWeight::Thin => 100,
+            FontWeight::ExtraLight => 200,
+            FontWeight::Light => 300,
+            FontWeight::Regular => 400,
+            FontWeight::Medium => 500,
+            FontWeight::SemiBold => 600,
+            FontWeight::Bold => 700,
+            FontWeight::ExtraBold => 800,
+            FontWeight::Black => 900,
+        }
+    }
 }
 
 pub use parley::{OverflowWrap, WordBreak};
@@ -381,6 +429,19 @@ pub struct TransformStyle {
 }
 
 /// Styling for the scrollbar painted on scrollable views and multiline inputs.
+/// Whether the scrollbar reserves layout space or paints over content.
+///
+/// `Overlay` (the default) is the macOS / modern-app style — thumb paints
+/// over content and nothing reflows when it appears. `Gutter` is the
+/// classic Windows / always-visible style: a reserved lane next to the
+/// content holds the scrollbar so it has a persistent target to grab.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ScrollbarMode {
+    #[default]
+    Overlay,
+    Gutter,
+}
+
 /// Defaults match the legacy hardcoded look (4px overlay thumb, white@90/140
 /// alpha, transparent track, pill-shaped via auto-radius).
 #[derive(Clone, Copy, Debug, PartialEq, Refineable)]
@@ -392,16 +453,29 @@ pub struct ScrollbarStyle {
     pub active_color: Color,
     /// `None` = pill (radius = width / 2); `Some(v)` = explicit radius.
     pub radius: Option<f32>,
+    pub mode: ScrollbarMode,
 }
 
 impl Default for ScrollbarStyle {
     fn default() -> Self {
         Self {
             width: 8.0,
-            color: Color::rgba(255, 255, 255, 90),
-            hover_color: Color::rgba(255, 255, 255, 140),
-            active_color: Color::rgba(255, 255, 255, 180),
+            color: Color::rgba(128, 128, 128, 110),
+            hover_color: Color::rgba(128, 128, 128, 160),
+            active_color: Color::rgba(128, 128, 128, 200),
             radius: None,
+            mode: ScrollbarMode::Overlay,
+        }
+    }
+}
+
+impl ScrollbarStyle {
+    /// Layout gutter reserved for the scrollbar. Zero in overlay mode —
+    /// the thumb paints over content and never reflows the layout.
+    pub fn gutter_width(self) -> f32 {
+        match self.mode {
+            ScrollbarMode::Overlay => 0.0,
+            ScrollbarMode::Gutter => self.width.max(0.0),
         }
     }
 }
@@ -425,6 +499,7 @@ impl TextSelectable {
         (!matches!(self, Self::Inherit)).then_some(self == &Self::True)
     }
 
+    #[inline]
     pub fn selectable(&self) -> bool {
         self == &Self::True
     }
@@ -500,6 +575,24 @@ impl TextStyle {
         .chain(letter_spacing)
         .chain(word_spacing)
     }
+
+    pub fn to_parley_text_style(
+        &self,
+        node_id: usize,
+    ) -> parley::TextStyle<'static, 'static, TextBrush> {
+        parley::TextStyle {
+            font_family: FontFamily::from(&*self.font_family).into_owned(),
+            font_size: self.font_size,
+            font_weight: self.font_weight.to_parley(),
+            line_height: LineHeight::FontSizeRelative(self.line_height),
+            letter_spacing: self.letter_spacing,
+            word_spacing: self.word_spacing,
+            overflow_wrap: self.overflow_wrap,
+            word_break: self.word_break,
+            brush: TextBrush::from_id(node_id),
+            ..Default::default()
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Refineable)]
@@ -552,22 +645,20 @@ pub struct UzStyle {
     pub box_shadow: Option<BoxShadow>,
     pub outline: Option<Outline>,
 
-    pub cursor: Option<UzCursorIcon>,
-
     // Text (inherited)
     #[refineable]
     pub text: TextStyle,
 
-    #[refineable]
-    pub transform: TransformStyle,
-
-    #[refineable]
-    pub scrollbar: ScrollbarStyle,
-
     /// Whether text within this element is selectable.
     /// None = inherit from parent (default). Some(true) = selectable, Some(false) = not.
-    /// toro move to style
     pub text_selectable: TextSelectable,
+    pub cursor: Option<UzCursorIcon>,
+
+    // TODO: move these out of UzStyle.
+    #[refineable]
+    pub transform: TransformStyle,
+    #[refineable]
+    pub scrollbar: ScrollbarStyle,
 }
 
 impl Default for UzStyle {
@@ -629,17 +720,21 @@ impl UzStyle {
         }
     }
 
-    pub fn inherit_from(&mut self, parent: &Self) {
-        /*Fixme: this is a work around  */
-        let overflow_wrap = self.text.overflow_wrap;
-        let word_break = self.text.word_break;
+    pub fn inherit_from(&mut self, parent: &Self, authored: &UzStyleRefinement) {
+        self.text.inherit_from(&parent.text, &authored.text);
 
-        self.text = parent.text.clone();
-        self.text.overflow_wrap = overflow_wrap;
-        self.text.word_break = word_break;
-        self.text_selectable = parent.text_selectable;
+        if authored.visibility.is_none() {
+            self.visibility = parent.visibility;
+        }
+        if authored.text_selectable.is_none() {
+            self.text_selectable = parent.text_selectable;
+        }
+        if authored.cursor.is_none() {
+            self.cursor = parent.cursor;
+        }
     }
 
+    /// todo find a better place
     pub fn default_for_element(element_type: &str) -> Self {
         match element_type {
             "view" => Self {
@@ -694,6 +789,7 @@ impl UzStyle {
                 x: overflow_to_taffy(self.overflow_x),
                 y: overflow_to_taffy(self.overflow_y),
             },
+            scrollbar_width: self.scrollbar.gutter_width(),
             size: taffy::Size {
                 width: length_to_dimension(self.size.width),
                 height: length_to_dimension(self.size.height),
@@ -958,6 +1054,33 @@ impl UzStyle {
         if bw.right > 0.0 {
             fill(scene, Rect::new(x + w - bw.right as f64, y, x + w, y + h));
         }
+    }
+}
+
+impl TextStyle {
+    pub fn inherit_from(&mut self, parent: &Self, authored: &TextStyleRefinement) {
+        macro_rules! inherit {
+            ($($field:ident),* $(,)?) => {
+                $(
+                    if authored.$field.is_none() {
+                        self.$field.clone_from(&parent.$field);
+                    }
+                )*
+            };
+        }
+
+        inherit!(
+            font_size,
+            font_family,
+            color,
+            line_height,
+            font_weight,
+            letter_spacing,
+            word_spacing,
+            overflow_wrap,
+            word_break,
+            text_align,
+        );
     }
 }
 

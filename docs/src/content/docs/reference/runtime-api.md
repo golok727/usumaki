@@ -71,7 +71,6 @@ node.insertBefore(child, beforeNode);
 node.removeChild(child);
 node.remove();
 node.removeChildren();
-node.destroy();
 
 window.createElement('button');
 window.createTextNode('Hello');
@@ -128,8 +127,8 @@ See [Window](/reference/window/) for all options and mutable properties.
 ```ts
 import { Clipboard } from 'uzumaki';
 
-const text = Clipboard.readText();
-Clipboard.writeText('Copied from Uzumaki');
+const text = await Clipboard.readText();
+await Clipboard.writeText('Copied from Uzumaki');
 ```
 
 ## Paths and Version

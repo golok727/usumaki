@@ -11,7 +11,7 @@
     "format": "prettier --write .",
     "lint": "oxlint --react-plugin --node-plugin .",
     "typecheck": "pnpm -r typecheck",
-    "gen:types": "bun scripts/generate-types",
+    "gen:types": "node scripts/generate-types.js",
     "lint:fix": "oxlint --react-plugin --node-plugin --fix .",
     "prepare": "husky"
   },

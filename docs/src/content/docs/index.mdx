@@ -17,28 +17,16 @@ hero:
       variant: minimal
 ---
 
-import { Card, CardGrid, LinkCard, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
-
-<Aside type="caution" title="Alpha">
-  These docs target `0.0.1-alpha.2`, which is not released yet. Uzumaki is early, so the docs teach the current behavior honestly while APIs are still settling.
-</Aside>
+import { Card, CardGrid, LinkCard, Aside, Tabs, TabItem, Code } from '@astrojs/starlight/components';
 
 ## Install
 
 <Tabs syncKey="platform">
   <TabItem label="Windows">
-
-```sh
-powershell irm https://uzumaki.run/install.ps1 | iex
-```
-
+    <Code code={`powershell -c "irm https://uzumaki.run/install.ps1 | iex"`} lang="sh" />
   </TabItem>
   <TabItem label="macOS & Linux">
-
-```sh
-curl -fsSL https://uzumaki.run/install.sh | sh
-```
-
+    <Code code={`curl -fsSL https://uzumaki.run/install.sh | sh`} lang="sh" />
   </TabItem>
 </Tabs>
 

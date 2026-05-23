@@ -1,7 +1,7 @@
 {
   "name": "uzumaki-react",
   "type": "module",
-  "version": "0.0.0",
+  "version": "0.0.1-alpha.3",
   "scripts": {
     "typecheck": "pnpm exec tsc -p tsconfig.json --noEmit"
   },
@@ -27,7 +27,7 @@
     "desktop-ui"
   ],
   "peerDependencies": {
-    "react": "^19.2.4"
+    "react": "^19.2.6"
   },
   "dependencies": {
     "react-reconciler": "^0.33.0"

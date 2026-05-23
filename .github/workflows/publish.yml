@@ -28,5 +28,11 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      - name: Generate types
+        run: pnpm gen:types
+
+      - name: Typecheck
+        run: pnpm typecheck
+
       - name: Publish
         run: pnpm -r publish --access public --no-git-checks

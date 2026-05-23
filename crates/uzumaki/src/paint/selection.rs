@@ -11,17 +11,14 @@ impl UIState {
     pub fn build_text_select_runs(&mut self) {
         self.selectable_text_runs.clear();
         let Some(root) = self.root else { return };
-        self.visit_text_select(root, None, None);
+        self.visit_text_select(root, None);
     }
 
-    fn visit_text_select(
-        &mut self,
-        node_id: UzNodeId,
-        parent_style: Option<&crate::style::UzStyle>,
-        run_idx: Option<usize>,
-    ) {
-        let style = self.computed_style(node_id, parent_style);
-        let resolved_text_sel = style.text_selectable.selectable();
+    fn visit_text_select(&mut self, node_id: UzNodeId, run_idx: Option<usize>) {
+        let resolved_text_sel = self.nodes[node_id]
+            .computed_style()
+            .text_selectable
+            .selectable();
 
         // A node that explicitly enables textSelect when the parent scope
         // doesn't have it starts a new selection scope.
@@ -39,27 +36,84 @@ impl UIState {
             None
         };
 
+        let is_inline_root = self.nodes[node_id].flags.is_inline_root();
+
         if let Some(idx) = current_run
-            && self.nodes[node_id].get_text_content().is_some()
+            && let Some(inline) = self.nodes[node_id]
+                .as_element()
+                .and_then(|element| element.inline_layout.as_ref())
+            && inline.is_inline_root()
         {
+            let entries = inline.entries().to_vec();
+            let run = &mut self.selectable_text_runs[idx];
+            for inline_entry in entries {
+                // Atomic inline-box entries (chips) carry no text in the
+                // parent's parley layout — they're recorded so document
+                // ordering is preserved, but the chip's own text is added
+                // when we recurse into the chip below.
+                if inline_entry.byte_len == 0 {
+                    continue;
+                }
+                let flat_start = run.total_graphemes;
+                let flat_byte_start = inline_entry.byte_start;
+                let flat_byte_end = flat_byte_start + inline_entry.byte_len;
+                let grapheme_start = layout_byte_to_grapheme(&inline.layout, flat_byte_start);
+                let grapheme_end = layout_byte_to_grapheme(&inline.layout, flat_byte_end);
+                let grapheme_count = grapheme_end.saturating_sub(grapheme_start);
+                run.entries.push(TextRunEntry {
+                    node_id: inline_entry.node_id,
+                    layout_node_id: node_id,
+                    flat_start,
+                    flat_byte_start,
+                    byte_len: inline_entry.byte_len,
+                    grapheme_count,
+                });
+                run.total_graphemes += grapheme_count;
+            }
+        } else if let Some(idx) = current_run
+            && self.nodes[node_id].get_text_content().is_some()
+            && self.nodes[node_id]
+                .as_element()
+                .and_then(|element| element.inline_layout.as_ref())
+                .is_some()
+        {
+            // Leaf text element (chip rendering its own text). Its parley
+            // layout lives on the chip itself and starts at byte 0.
             let gc = self.nodes[node_id]
-                .text_layout
-                .as_ref()
+                .as_element()
+                .and_then(|element| element.inline_layout.as_ref())
+                .map(|inline| &inline.layout)
                 .map(cluster_count)
                 .unwrap_or(0);
             let run = &mut self.selectable_text_runs[idx];
             run.entries.push(TextRunEntry {
                 node_id,
+                layout_node_id: node_id,
                 flat_start: run.total_graphemes,
+                flat_byte_start: 0,
+                byte_len: self.nodes[node_id]
+                    .get_text_content()
+                    .map(|text| text.content.len())
+                    .unwrap_or(0),
                 grapheme_count: gc,
             });
             run.total_graphemes += gc;
         }
 
-        let child_count = self.nodes[node_id].children.len();
-        for i in 0..child_count {
-            let cid = self.nodes[node_id].children[i];
-            self.visit_text_select(cid, Some(&style), current_run);
+        let layout_children = self.nodes[node_id].layout_children.borrow().clone();
+        for cid in layout_children {
+            // Bare text children of an inline-root parent are already
+            // represented in the parent's entries; skip them so we don't
+            // double-count.
+            if is_inline_root
+                && matches!(
+                    self.nodes.get(cid).map(|n| &n.data),
+                    Some(crate::node::NodeData::Text(_))
+                )
+            {
+                continue;
+            }
+            self.visit_text_select(cid, current_run);
         }
     }
 
@@ -201,8 +255,17 @@ impl UIState {
             let entry_end = entry.flat_start + entry.grapheme_count;
             if flat_index <= entry_end {
                 let local_grapheme = flat_index.saturating_sub(entry.flat_start);
-                let layout = self.nodes.get(entry.node_id)?.text_layout.as_ref()?;
-                let offset = layout_grapheme_to_byte(layout, local_grapheme);
+                let layout = &self
+                    .nodes
+                    .get(entry.layout_node_id)?
+                    .as_element()?
+                    .inline_layout
+                    .as_ref()?
+                    .layout;
+                let entry_grapheme_start = layout_byte_to_grapheme(layout, entry.flat_byte_start);
+                let offset = layout_grapheme_to_byte(layout, entry_grapheme_start + local_grapheme)
+                    .saturating_sub(entry.flat_byte_start)
+                    .min(entry.byte_len);
                 return Some(SelectionEndpoint::new(entry.node_id, offset, affinity));
             }
         }
@@ -217,8 +280,19 @@ impl UIState {
 
     pub fn flat_index_for_endpoint(&self, endpoint: SelectionEndpoint) -> Option<usize> {
         let (_run, entry) = self.find_run_entry_for_node(endpoint.node)?;
-        let layout = self.nodes.get(endpoint.node)?.text_layout.as_ref()?;
-        Some(entry.flat_start + layout_byte_to_grapheme(layout, endpoint.offset))
+        let layout = &self
+            .nodes
+            .get(entry.layout_node_id)?
+            .as_element()?
+            .inline_layout
+            .as_ref()?
+            .layout;
+        let entry_grapheme_start = layout_byte_to_grapheme(layout, entry.flat_byte_start);
+        let endpoint_grapheme = layout_byte_to_grapheme(
+            layout,
+            entry.flat_byte_start + endpoint.offset.min(entry.byte_len),
+        );
+        Some(entry.flat_start + endpoint_grapheme.saturating_sub(entry_grapheme_start))
     }
 
     /// Walk forward from `flat_idx` to the next word boundary inside the
@@ -245,8 +319,10 @@ impl UIState {
             let entry = &run.entries[entry_i];
             if let Some(layout) = self
                 .nodes
-                .get(entry.node_id)
-                .and_then(|n| n.text_layout.as_ref())
+                .get(entry.layout_node_id)
+                .and_then(|n| n.as_element())
+                .and_then(|element| element.inline_layout.as_ref())
+                .map(|inline| &inline.layout)
             {
                 if crossed_entry
                     && let Some(first) = Cluster::from_byte_index(layout, 0)
@@ -255,12 +331,15 @@ impl UIState {
                     return entry.flat_start;
                 }
                 if local < entry.grapheme_count {
-                    let byte = layout_grapheme_to_byte(layout, local);
+                    let entry_grapheme_start =
+                        layout_byte_to_grapheme(layout, entry.flat_byte_start);
+                    let byte = layout_grapheme_to_byte(layout, entry_grapheme_start + local);
                     if let Some(cur) = Cluster::from_byte_index(layout, byte)
                         && let Some(next) = cur.next_logical_word()
                     {
-                        let g = layout_byte_to_grapheme(layout, next.text_range().start);
-                        return entry.flat_start + g;
+                        let g = layout_byte_to_grapheme(layout, next.text_range().start)
+                            .saturating_sub(entry_grapheme_start);
+                        return entry.flat_start + g.min(entry.grapheme_count);
                     }
                 }
             }
@@ -293,11 +372,17 @@ impl UIState {
             let entry = &run.entries[entry_i];
             if let Some(layout) = self
                 .nodes
-                .get(entry.node_id)
-                .and_then(|n| n.text_layout.as_ref())
+                .get(entry.layout_node_id)
+                .and_then(|n| n.as_element())
+                .and_then(|element| element.inline_layout.as_ref())
+                .map(|inline| &inline.layout)
             {
+                let entry_grapheme_start = layout_byte_to_grapheme(layout, entry.flat_byte_start);
                 let cur = if local >= entry.grapheme_count && entry.grapheme_count > 0 {
-                    let last_byte = layout_grapheme_to_byte(layout, entry.grapheme_count - 1);
+                    let last_byte = layout_grapheme_to_byte(
+                        layout,
+                        entry_grapheme_start + entry.grapheme_count - 1,
+                    );
                     let last = Cluster::from_byte_index(layout, last_byte);
                     if let Some(c) = &last
                         && c.is_word_boundary()
@@ -306,7 +391,7 @@ impl UIState {
                     }
                     last
                 } else if local > 0 {
-                    let byte = layout_grapheme_to_byte(layout, local);
+                    let byte = layout_grapheme_to_byte(layout, entry_grapheme_start + local);
                     Cluster::from_byte_index(layout, byte)
                 } else {
                     None
@@ -314,8 +399,9 @@ impl UIState {
                 if let Some(c) = cur
                     && let Some(prev) = c.previous_logical_word()
                 {
-                    let g = layout_byte_to_grapheme(layout, prev.text_range().start);
-                    return entry.flat_start + g;
+                    let g = layout_byte_to_grapheme(layout, prev.text_range().start)
+                        .saturating_sub(entry_grapheme_start);
+                    return entry.flat_start + g.min(entry.grapheme_count);
                 }
             }
             if entry_i == 0 {
@@ -498,13 +584,32 @@ fn locate_in_run(run: &TextSelectRun, flat_idx: usize) -> Option<(usize, usize)>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::style::{TextSelectable, UzStyle};
+    use crate::style::{Display, TextSelectable, UzStyle};
 
     fn selectable_style() -> UzStyle {
+        // Block display so the construct phase folds the inline children
+        // into a single inline-formatting context with populated entries —
+        // selection-run building consumes those entries directly without
+        // needing a glyph layout pass to run first.
         UzStyle {
+            display: Display::Block,
             text_selectable: TextSelectable::True,
             ..Default::default()
         }
+    }
+
+    fn prepare_for_select_runs(dom: &mut UIState) {
+        let Some(root) = dom.root else { return };
+        fn cascade(dom: &mut UIState, id: UzNodeId, parent: Option<UzStyle>) {
+            dom.nodes[id].compute_styles(false, false, false, parent.as_ref());
+            let style = dom.nodes[id].computed_style().clone();
+            let children = dom.nodes[id].children.clone();
+            for child in children {
+                cascade(dom, child, Some(style.clone()));
+            }
+        }
+        cascade(dom, root, None);
+        dom.resolve_layout_children();
     }
 
     #[test]
@@ -516,6 +621,7 @@ mod tests {
         dom.set_root(root);
         dom.append_child(root, first);
         dom.append_child(root, second);
+        prepare_for_select_runs(&mut dom);
         dom.build_text_select_runs();
 
         dom.set_selection(TextSelection::new(
@@ -535,6 +641,7 @@ mod tests {
         dom.set_root(root);
         dom.append_child(root, first);
         dom.append_child(root, second);
+        prepare_for_select_runs(&mut dom);
         dom.build_text_select_runs();
         dom.set_selection(TextSelection::new(
             SelectionEndpoint::new(first, 1, Affinity::Downstream),

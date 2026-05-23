@@ -81,21 +81,15 @@ export class Element<M extends UzEventMap = UzEventMap> extends UzNode {
     core.focusElement(this.window.id, this._native.id);
   }
 
-  setAttribute(name: string, value: unknown): void {
+  setAttribute(name: string, value: string | number | boolean): void {
     if (value == null) {
       this.removeAttribute(name);
       return;
     }
-    if (typeof value === 'boolean') {
-      this._native.setBoolAttribute(name, value);
-    } else if (typeof value === 'number') {
-      this._native.setNumberAttribute(name, value);
-    } else {
-      this._native.setStrAttribute(name, String(value));
-    }
+    this._native.setAttribute(name, String(value));
   }
 
-  setAttributes(attributes: Record<string, unknown>): void {
+  setAttributes(attributes: Record<string, number | string | boolean>): void {
     for (const [key, value] of Object.entries(attributes)) {
       this.setAttribute(key, value);
     }
@@ -108,17 +102,14 @@ export class Element<M extends UzEventMap = UzEventMap> extends UzNode {
   getAttribute(name: string): unknown {
     return this._native.getAttribute(name);
   }
-
-  override destroy(): void {
-    this._emitter._clear();
-    super.destroy();
-  }
 }
 
+/** @internal */
 export function createNativeElement(window: Window, type: string): CoreNode {
   return core.createElementNode(window.id, type);
 }
 
+/** @internal */
 export function getNativeRootNode(window: Window): CoreNode {
   return core.getRootNode(window.id);
 }

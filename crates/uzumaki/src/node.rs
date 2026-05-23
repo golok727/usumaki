@@ -1,14 +1,49 @@
-use std::ops::{Deref, DerefMut};
+use std::{
+    cell::RefCell,
+    ops::{Deref, DerefMut},
+};
+
+use bitflags::bitflags;
+use refineable::Refineable;
 
 use crate::cursor::UzCursorIcon;
 use crate::element::{ElementNode, ImageNode, TextContent};
 use crate::input::InputState;
-use crate::interactivity::{HitboxId, StyleVariants};
-use crate::style::{TextSelectable, UzStyle};
-use crate::text::TextBrush;
-use parley::Layout as ParleyLayout;
+use crate::interactivity::{HitboxId, Interactivity, StyleSlot};
+use crate::style::{Outline, TextSelectable, UzStyle, UzStyleRefinement};
 
 pub type UzNodeId = usize;
+
+/// Records that an attribute was set with a `$name` reference. Kept per-node so
+/// `setVar` can re-apply just the affected attributes without rescanning the
+/// whole DOM by string.
+#[derive(Clone, Debug)]
+pub struct VarBinding {
+    pub attr_name: String,
+    pub var_name: String,
+}
+
+bitflags! {
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub struct NodeFlags: u8 {
+        const ANONYMOUS = 1 << 0;
+        const INLINE_ROOT = 1 << 1;
+    }
+}
+
+impl NodeFlags {
+    pub fn reset_construction_flags(&mut self) {
+        self.remove(Self::INLINE_ROOT);
+    }
+
+    pub fn is_anonymous(self) -> bool {
+        self.contains(Self::ANONYMOUS)
+    }
+
+    pub fn is_inline_root(self) -> bool {
+        self.contains(Self::INLINE_ROOT)
+    }
+}
 
 /// Which axis a scroll operation targets. Used by drag/wheel routing and by
 /// the unified scrollbar geometry helpers.
@@ -89,55 +124,139 @@ pub struct Node {
 
     pub children: Vec<UzNodeId>,
 
+    default_style: UzStyle,
+
     pub data: NodeData,
 
-    /// The base style for this element. Converted to taffy for layout.
-    pub style: UzStyle,
-    /// Hover/active/focus style refinements.
-    pub style_variants: StyleVariants,
-    /// Hitbox assigned during the latest paint pass. None if not painted yet.
+    pub flags: NodeFlags,
+
+    pub interactivity: Interactivity,
+
     pub hitbox_id: Option<HitboxId>,
-    /// Per-node scroll offsets for content that can scroll on either axis.
+    // nit: we can just use a point
     pub scroll_state: ScrollState,
-    /// Cached parley layout for text-bearing nodes (text node or `<text>`
-    /// element). Refreshed once per frame after taffy compute, then reused by
-    /// paint, selection geometry and hit-testing instead of rebuilding parley
-    /// layouts on every read.
-    pub text_layout: Option<ParleyLayout<TextBrush>>,
-    /// Cached taffy layout for this node, copied here after `compute_layout`
-    /// runs. Reading `node.final_layout` avoids the
-    /// `layout_engine.layout(node_id)` two-level lookup on the paint hot path.
+
+    // cache the computed style for a frame
+    computed_style: UzStyle,
+
     pub final_layout: taffy::Layout,
+    pub unrounded_layout: taffy::Layout,
+    pub cache: taffy::Cache,
+    pub taffy_style: taffy::Style,
+    /// Layout-tree parent. Equals `parent` for normal nodes; for the original
+    /// inline children that were wrapped, points at the synthetic anonymous
+    /// inline wrapper instead. Set by the construct phase each frame.
+    pub layout_parent: Option<UzNodeId>,
+    /// Layout-tree children. Rebuilt by the construct phase to splice
+    /// anonymous inline wrappers around runs of inline-level children.
+    pub layout_children: RefCell<Vec<UzNodeId>>,
+
+    /// Attributes on this node authored as `$name` references. Re-resolved
+    /// when `JsWindow::set_var` mutates the window var table.
+    pub var_bindings: Vec<VarBinding>,
 }
 
 impl Node {
-    pub fn new(style: UzStyle, data: impl Into<NodeData>) -> Self {
+    pub fn new(default_style: UzStyle, data: impl Into<NodeData>) -> Self {
+        // todo should we keep a base style to derive from ?
+        let taffy_style = default_style.to_taffy();
         Self {
             parent: None,
             children: Vec::new(),
+            default_style: default_style.clone(),
+            computed_style: default_style,
+            taffy_style,
             data: data.into(),
-            style,
-            style_variants: StyleVariants::new(),
+            interactivity: Interactivity::default(),
             hitbox_id: None,
             scroll_state: ScrollState::new(),
-            text_layout: None,
             final_layout: taffy::Layout::new(),
+            unrounded_layout: taffy::Layout::new(),
+            cache: taffy::Cache::new(),
+            layout_parent: None,
+            layout_children: RefCell::new(Vec::new()),
+            flags: NodeFlags::empty(),
+            var_bindings: Vec::new(),
         }
     }
 }
 
 impl Node {
+    pub fn base_style(&mut self) -> &mut UzStyleRefinement {
+        self.style_slot(StyleSlot::Base)
+    }
+
+    pub(crate) fn style_slot(&mut self, variant: StyleSlot) -> &mut UzStyleRefinement {
+        self.interactivity.style_for(variant)
+    }
+
+    pub fn computed_style(&self) -> &UzStyle {
+        &self.computed_style
+    }
+
+    pub fn compute_styles(
+        &mut self,
+        hover: bool,
+        active: bool,
+        focus: bool,
+        parent_style: Option<&UzStyle>,
+    ) {
+        let mut style = self.default_style.clone();
+
+        if let Some(parent_style) = parent_style {
+            style.inherit_from(parent_style, &self.interactivity.base_style);
+        }
+
+        style.refine(&self.interactivity.base_style);
+
+        if hover && let Some(refinement) = &self.interactivity.hover_style {
+            style.refine(refinement);
+        }
+        if active && let Some(refinement) = &self.interactivity.active_style {
+            style.refine(refinement);
+        }
+        if focus && let Some(refinement) = &self.interactivity.focus_style {
+            style.refine(refinement);
+        }
+        if focus && style.outline.is_none() {
+            style.outline = Some(Outline::FOCUS_RING);
+        }
+
+        self.taffy_style = style.to_taffy();
+        self.computed_style = style;
+    }
+
     #[inline]
     pub fn text_selectable(&self) -> TextSelectable {
-        self.style.text_selectable
+        self.computed_style().text_selectable
     }
 
     pub fn is_text_selectable(&self) -> bool {
-        self.style.text_selectable.selectable()
+        self.computed_style().text_selectable.selectable()
+    }
+
+    /// Estimated total heap footprint of this node. Used to keep V8's
+    /// external-memory accounting honest so the GC schedules collections
+    /// based on real cost (image pixels, editor buffers) instead of a flat
+    /// per-node constant.
+    pub fn heap_bytes(&self) -> usize {
+        let mut bytes = std::mem::size_of::<Self>();
+        bytes += self.children.capacity() * std::mem::size_of::<UzNodeId>();
+        bytes += self.layout_children.borrow().capacity() * std::mem::size_of::<UzNodeId>();
+        if let Some(img) = self.as_image() {
+            bytes += img.heap_bytes();
+        }
+        if let Some(input) = self.as_text_input() {
+            bytes += input.heap_bytes();
+        }
+        if let Some(text) = self.get_text_content() {
+            bytes += text.content.capacity();
+        }
+        bytes
     }
 
     pub fn set_text_selectable(&mut self, text_selectable: TextSelectable) {
-        self.style.text_selectable = text_selectable
+        self.style_slot(StyleSlot::Base).text_selectable = Some(text_selectable);
     }
 
     pub fn as_text_input(&self) -> Option<&InputState> {
@@ -204,6 +323,13 @@ impl Node {
         self.data.is_text_node()
     }
 
+    pub fn is_text_element(&self) -> bool {
+        matches!(
+            &self.data,
+            NodeData::Element(el) if matches!(el.kind, crate::element::ElementKind::Text)
+        )
+    }
+
     pub fn default_cursor(&self) -> Option<UzCursorIcon> {
         self.data.default_cursor()
     }
@@ -213,6 +339,21 @@ impl Node {
         self.as_element()
             .map(|e| e.is_focussable())
             .unwrap_or(false)
+    }
+
+    /// Whether this node participates in an inline formatting context as a
+    /// child (bare text node, or `<text>` element). Block-level elements
+    /// (View, Button, Input, Image, Checkbox) are not inline.
+    pub fn is_inline_level(&self) -> bool {
+        match &self.data {
+            NodeData::Text(_) => true,
+            NodeData::Element(el) => matches!(el.kind, crate::element::ElementKind::Text),
+            NodeData::AnonymousBlock(_) | NodeData::Root => false,
+        }
+    }
+
+    pub fn is_anonymous(&self) -> bool {
+        self.flags.is_anonymous()
     }
 }
 
@@ -250,6 +391,7 @@ pub enum NodeData {
     Text(TextNode),
     // element node
     Element(ElementNode),
+    AnonymousBlock(ElementNode),
 }
 
 impl From<ElementNode> for NodeData {
@@ -265,7 +407,7 @@ impl NodeData {
             // Plain text labels should inherit the cursor from their container.
             // Text cursor is handled separately for inputs and textSelect content.
             Self::Text(_) => None,
-            _ => None,
+            Self::AnonymousBlock(_) | Self::Root => None,
         }
     }
 
@@ -277,7 +419,7 @@ impl NodeData {
         match self {
             Self::Text(text) => Some(&text.0),
             Self::Element(element) => element.data.get_text_content(),
-            _ => None,
+            Self::AnonymousBlock(_) | Self::Root => None,
         }
     }
 
@@ -285,49 +427,49 @@ impl NodeData {
         match self {
             Self::Text(text) => Some(text),
             Self::Element(element) => element.data.text_content_mut(),
-            _ => None,
+            Self::AnonymousBlock(_) | Self::Root => None,
         }
     }
 
     pub fn as_text_input(&self) -> Option<&InputState> {
         match self {
             Self::Element(element) => element.data.as_text_input(),
-            _ => None,
+            Self::AnonymousBlock(_) | Self::Root | Self::Text(_) => None,
         }
     }
 
     pub fn as_text_input_mut(&mut self) -> Option<&mut InputState> {
         match self {
             Self::Element(element) => element.data.as_text_input_mut(),
-            _ => None,
+            Self::AnonymousBlock(_) | Self::Root | Self::Text(_) => None,
         }
     }
 
     pub fn as_checkbox_input(&self) -> Option<&bool> {
         match self {
             Self::Element(element) => element.data.as_checkbox_input(),
-            _ => None,
+            Self::AnonymousBlock(_) | Self::Root | Self::Text(_) => None,
         }
     }
 
     pub fn as_checkbox_input_mut(&mut self) -> Option<&mut bool> {
         match self {
             Self::Element(element) => element.data.as_checkbox_input_mut(),
-            _ => None,
+            Self::AnonymousBlock(_) | Self::Root | Self::Text(_) => None,
         }
     }
 
     pub fn as_image(&self) -> Option<&ImageNode> {
         match self {
             Self::Element(element) => element.data.as_image(),
-            _ => None,
+            Self::AnonymousBlock(_) | Self::Root | Self::Text(_) => None,
         }
     }
 
     pub fn as_image_mut(&mut self) -> Option<&mut ImageNode> {
         match self {
             Self::Element(element) => element.data.as_image_mut(),
-            _ => None,
+            Self::AnonymousBlock(_) | Self::Root | Self::Text(_) => None,
         }
     }
 
@@ -338,35 +480,35 @@ impl NodeData {
     pub fn is_text_input(&self) -> bool {
         match self {
             Self::Element(element) => element.data.is_text_input(),
-            _ => false,
+            Self::AnonymousBlock(_) | Self::Root | Self::Text(_) => false,
         }
     }
 
     pub fn is_checkbox_input(&self) -> bool {
         match self {
             Self::Element(element) => element.data.is_checkbox_input(),
-            _ => false,
+            Self::AnonymousBlock(_) | Self::Root | Self::Text(_) => false,
         }
     }
 
     pub fn is_image(&self) -> bool {
         match self {
             Self::Element(element) => element.data.is_image(),
-            _ => false,
+            Self::AnonymousBlock(_) | Self::Root | Self::Text(_) => false,
         }
     }
 
     pub fn is_button(&self) -> bool {
         match self {
             Self::Element(element) => element.is_button(),
-            _ => false,
+            Self::AnonymousBlock(_) | Self::Root | Self::Text(_) => false,
         }
     }
 
     pub fn is_keyboard_activatable(&self) -> bool {
         match self {
             Self::Element(element) => element.is_keyboard_activatable(),
-            _ => false,
+            Self::AnonymousBlock(_) | Self::Root | Self::Text(_) => false,
         }
     }
 
@@ -380,29 +522,15 @@ impl NodeData {
 
     pub fn as_element(&self) -> Option<&ElementNode> {
         match self {
-            Self::Element(element) => Some(element),
-            _ => None,
+            Self::AnonymousBlock(element) | Self::Element(element) => Some(element),
+            Self::Root | Self::Text(_) => None,
         }
     }
 
     pub fn as_element_mut(&mut self) -> Option<&mut ElementNode> {
         match self {
-            Self::Element(element) => Some(element),
-            _ => None,
-        }
-    }
-
-    pub fn as_element_kind(&self) -> Option<&ElementNode> {
-        match self {
-            Self::Element(element) => Some(element),
-            _ => None,
-        }
-    }
-
-    pub fn as_element_kind_mut(&mut self) -> Option<&mut ElementNode> {
-        match self {
-            Self::Element(element) => Some(element),
-            _ => None,
+            Self::AnonymousBlock(element) | Self::Element(element) => Some(element),
+            Self::Root | Self::Text(_) => None,
         }
     }
 }

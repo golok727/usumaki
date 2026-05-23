@@ -1,9 +1,9 @@
 use deno_core::*;
 use serde_json::Value;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
-use crate::app::{AppState, NODE_EXTERNAL_BYTES, SharedAppState, with_state};
+use crate::app::{JsState, SharedJsState, with_state};
 use crate::node::{Node, NodeData, UzNodeId};
 use crate::paint::scroll::{ScrollAlign, ScrollIntoViewOptions};
 use crate::style::UzStyle;
@@ -21,30 +21,44 @@ fn invalid_child() -> deno_error::JsErrorBox {
 }
 
 pub struct CoreNode {
-    app_state: Weak<RefCell<AppState>>,
+    js_state: Weak<RefCell<JsState>>,
     window_id: u32,
     node_id: UzNodeId,
     owned: bool,
+    /// Bytes this wrapper reported into `external_memory_delta` at creation
+    /// time, so the matching subtraction on drop stays balanced even when
+    /// the underlying node's heap footprint has changed since.
+    reported_bytes: Cell<usize>,
 }
 
 impl CoreNode {
-    pub fn new(app_state: &SharedAppState, window_id: u32, node_id: UzNodeId, owned: bool) -> Self {
-        if owned {
-            with_state(app_state, |s| {
-                s.external_memory_delta += NODE_EXTERNAL_BYTES;
-            });
-        }
+    pub fn new(js_state: &SharedJsState, window_id: u32, node_id: UzNodeId, owned: bool) -> Self {
+        let reported = if owned {
+            with_state(js_state, |s| {
+                let bytes = s
+                    .windows
+                    .get(&window_id)
+                    .and_then(|e| e.dom.nodes.get(node_id))
+                    .map(Node::heap_bytes)
+                    .unwrap_or(0);
+                s.external_memory_delta += bytes as i64;
+                bytes
+            })
+        } else {
+            0
+        };
         Self {
-            app_state: Rc::downgrade(app_state),
+            js_state: Rc::downgrade(js_state),
             window_id,
             node_id,
             owned,
+            reported_bytes: Cell::new(reported),
         }
     }
 
     fn read_node<R>(&self, state: &OpState, read: impl FnOnce(&Node) -> R) -> Option<R> {
-        let app_state = state.borrow::<SharedAppState>().clone();
-        with_state(&app_state, |s| {
+        let js_state = state.borrow::<SharedJsState>().clone();
+        with_state(&js_state, |s| {
             let entry = s.windows.get(&self.window_id)?;
             let node = entry.dom.nodes.get(self.node_id)?;
             Some(read(node))
@@ -56,8 +70,8 @@ impl CoreNode {
         state: &mut OpState,
         read: impl FnOnce(&Node) -> Option<UzNodeId>,
     ) -> Result<Option<u32>, deno_error::JsErrorBox> {
-        let app_state = state.borrow::<SharedAppState>().clone();
-        with_state(&app_state, |s| {
+        let js_state = state.borrow::<SharedJsState>().clone();
+        with_state(&js_state, |s| {
             let Some(entry) = s.windows.get(&self.window_id) else {
                 return Err(window_not_found());
             };
@@ -79,17 +93,17 @@ impl Drop for CoreNode {
             return;
         }
 
-        let Some(app_state) = self.app_state.upgrade() else {
+        let Some(js_state) = self.js_state.upgrade() else {
             return;
         };
 
         // cppgc finalizers can run inside any V8 turn, including ones where an
         // op already holds AppState borrowed. Use try_borrow_mut and fall back
         // to leaving the slab entry for the next finalizer pass — never panic.
-        let Ok(mut state) = app_state.try_borrow_mut() else {
+        let Ok(mut state) = js_state.try_borrow_mut() else {
             return;
         };
-        state.external_memory_delta -= NODE_EXTERNAL_BYTES;
+        state.external_memory_delta -= self.reported_bytes.get() as i64;
         if state.windows.contains_key(&self.window_id) {
             state
                 .pending_destroy
@@ -112,13 +126,13 @@ pub fn op_get_root_node(
     state: &mut OpState,
     #[smi] window_id: u32,
 ) -> Result<CoreNode, deno_error::JsErrorBox> {
-    let app_state = state.borrow::<SharedAppState>().clone();
-    with_state(&app_state, |s| {
+    let js_state = state.borrow::<SharedJsState>().clone();
+    with_state(&js_state, |s| {
         let Some(entry) = s.windows.get(&window_id) else {
             return Err(window_not_found());
         };
         let root = entry.dom.root.expect("no root node");
-        Ok(CoreNode::new(&app_state, window_id, root, false))
+        Ok(CoreNode::new(&js_state, window_id, root, false))
     })
 }
 
@@ -129,10 +143,10 @@ pub fn op_create_element_node(
     #[smi] window_id: u32,
     #[string] element_type: String,
 ) -> Result<CoreNode, deno_error::JsErrorBox> {
-    let app_state = state.borrow::<SharedAppState>().clone();
+    let js_state = state.borrow::<SharedJsState>().clone();
     let node_id = create_element(state, window_id, &element_type)?;
     Ok(CoreNode::new(
-        &app_state,
+        &js_state,
         window_id,
         node_id as UzNodeId,
         true,
@@ -146,10 +160,10 @@ pub fn op_create_text_node(
     #[smi] window_id: u32,
     #[string] text: String,
 ) -> Result<CoreNode, deno_error::JsErrorBox> {
-    let app_state = state.borrow::<SharedAppState>().clone();
+    let js_state = state.borrow::<SharedJsState>().clone();
     let node_id = create_text_node(state, window_id, text)?;
     Ok(CoreNode::new(
-        &app_state,
+        &js_state,
         window_id,
         node_id as UzNodeId,
         true,
@@ -158,6 +172,34 @@ pub fn op_create_text_node(
 
 #[op2]
 impl CoreNode {
+    /// Re-acquire a wrapper around an existing slab node by id. Used by the JS
+    /// registry to rebuild a wrapper after its previous one was collected but
+    /// the native node is still alive (because it's connected to the tree).
+    /// Throws if the slab entry is gone.
+    #[constructor]
+    #[cppgc]
+    fn new_from_id(
+        state: &mut OpState,
+        #[smi] window_id: u32,
+        #[smi] node_id: u32,
+    ) -> Result<CoreNode, deno_error::JsErrorBox> {
+        let js_state = state.borrow::<SharedJsState>().clone();
+        with_state(&js_state, |s| {
+            let Some(entry) = s.windows.get(&window_id) else {
+                return Err(window_not_found());
+            };
+            if !entry.dom.nodes.contains(node_id as UzNodeId) {
+                return Err(node_not_found());
+            }
+            Ok(CoreNode::new(
+                &js_state,
+                window_id,
+                node_id as UzNodeId,
+                true,
+            ))
+        })
+    }
+
     #[getter]
     #[smi]
     pub fn id(&self) -> u32 {
@@ -177,7 +219,7 @@ impl CoreNode {
     pub fn nodeType(&self, state: &OpState) -> Option<u32> {
         self.read_node(state, |node| match node.data {
             NodeData::Root => 1,
-            NodeData::Element(_) => 2,
+            NodeData::Element(_) | NodeData::AnonymousBlock(_) => 2,
             NodeData::Text(_) => 3,
         })
     }
@@ -200,8 +242,8 @@ impl CoreNode {
     #[smi]
     #[allow(non_snake_case)]
     pub fn firstChildId(&self, state: &mut OpState) -> Result<Option<u32>, deno_error::JsErrorBox> {
-        let app_state = state.borrow::<SharedAppState>().clone();
-        with_state(&app_state, |s| {
+        let js_state = state.borrow::<SharedJsState>().clone();
+        with_state(&js_state, |s| {
             let Some(entry) = s.windows.get(&self.window_id) else {
                 return Err(window_not_found());
             };
@@ -213,8 +255,8 @@ impl CoreNode {
     #[smi]
     #[allow(non_snake_case)]
     pub fn lastChildId(&self, state: &mut OpState) -> Result<Option<u32>, deno_error::JsErrorBox> {
-        let app_state = state.borrow::<SharedAppState>().clone();
-        with_state(&app_state, |s| {
+        let js_state = state.borrow::<SharedJsState>().clone();
+        with_state(&js_state, |s| {
             let Some(entry) = s.windows.get(&self.window_id) else {
                 return Err(window_not_found());
             };
@@ -229,8 +271,8 @@ impl CoreNode {
         &self,
         state: &mut OpState,
     ) -> Result<Option<u32>, deno_error::JsErrorBox> {
-        let app_state = state.borrow::<SharedAppState>().clone();
-        with_state(&app_state, |s| {
+        let js_state = state.borrow::<SharedJsState>().clone();
+        with_state(&js_state, |s| {
             let Some(entry) = s.windows.get(&self.window_id) else {
                 return Err(window_not_found());
             };
@@ -245,8 +287,8 @@ impl CoreNode {
         &self,
         state: &mut OpState,
     ) -> Result<Option<u32>, deno_error::JsErrorBox> {
-        let app_state = state.borrow::<SharedAppState>().clone();
-        with_state(&app_state, |s| {
+        let js_state = state.borrow::<SharedJsState>().clone();
+        with_state(&js_state, |s| {
             let Some(entry) = s.windows.get(&self.window_id) else {
                 return Err(window_not_found());
             };
@@ -329,8 +371,8 @@ impl CoreNode {
     #[fast]
     #[allow(non_snake_case)]
     pub fn removeChildren(&self, state: &mut OpState) -> Result<(), deno_error::JsErrorBox> {
-        let app_state = state.borrow::<SharedAppState>().clone();
-        with_state(&app_state, |s| {
+        let js_state = state.borrow::<SharedJsState>().clone();
+        with_state(&js_state, |s| {
             let Some(entry) = s.windows.get_mut(&self.window_id) else {
                 return Err(window_not_found());
             };
@@ -341,25 +383,8 @@ impl CoreNode {
 
     #[fast]
     #[allow(non_snake_case)]
-    pub fn setStrAttribute(
-        &self,
-        state: &mut OpState,
-        #[string] name: &str,
-        #[string] value: &str,
-    ) {
-        set_str_attribute(state, self.window_id, self.node_id as u32, name, value);
-    }
-
-    #[fast]
-    #[allow(non_snake_case)]
-    pub fn setNumberAttribute(&self, state: &mut OpState, #[string] name: &str, value: f64) {
-        set_number_attribute(state, self.window_id, self.node_id as u32, name, value);
-    }
-
-    #[fast]
-    #[allow(non_snake_case)]
-    pub fn setBoolAttribute(&self, state: &mut OpState, #[string] name: &str, value: bool) {
-        set_bool_attribute(state, self.window_id, self.node_id as u32, name, value);
+    pub fn setAttribute(&self, state: &mut OpState, #[string] name: &str, #[string] value: &str) {
+        set_attribute(state, self.window_id, self.node_id as u32, name, value);
     }
 
     #[fast]
@@ -385,8 +410,8 @@ impl CoreNode {
         &self,
         state: &mut OpState,
     ) -> Result<Option<String>, deno_error::JsErrorBox> {
-        let app_state = state.borrow::<SharedAppState>().clone();
-        with_state(&app_state, |s| {
+        let js_state = state.borrow::<SharedJsState>().clone();
+        with_state(&js_state, |s| {
             let Some(entry) = s.windows.get(&self.window_id) else {
                 return Err(window_not_found());
             };
@@ -448,8 +473,8 @@ fn create_element(
     window_id: u32,
     element_type: &str,
 ) -> Result<u32, deno_error::JsErrorBox> {
-    let app_state = state.borrow::<SharedAppState>().clone();
-    with_state(&app_state, |s| {
+    let js_state = state.borrow::<SharedJsState>().clone();
+    with_state(&js_state, |s| {
         let Some(entry) = s.windows.get_mut(&window_id) else {
             return Err(window_not_found());
         };
@@ -476,8 +501,8 @@ fn create_text_node(
     window_id: u32,
     text: String,
 ) -> Result<u32, deno_error::JsErrorBox> {
-    let app_state = state.borrow::<SharedAppState>().clone();
-    with_state(&app_state, |s| {
+    let js_state = state.borrow::<SharedJsState>().clone();
+    with_state(&js_state, |s| {
         let Some(entry) = s.windows.get_mut(&window_id) else {
             return Err(window_not_found());
         };
@@ -495,8 +520,8 @@ fn append_child(
 ) -> Result<(), deno_error::JsErrorBox> {
     let pid = parent_id as UzNodeId;
     let cid = child_id as UzNodeId;
-    let app_state = state.borrow::<SharedAppState>().clone();
-    with_state(&app_state, |s| {
+    let js_state = state.borrow::<SharedJsState>().clone();
+    with_state(&js_state, |s| {
         let Some(entry) = s.windows.get_mut(&window_id) else {
             return Err(window_not_found());
         };
@@ -515,8 +540,8 @@ fn insert_before(
     let pid = parent_id as UzNodeId;
     let cid = child_id as UzNodeId;
     let bid = before_id as UzNodeId;
-    let app_state = state.borrow::<SharedAppState>().clone();
-    with_state(&app_state, |s| {
+    let js_state = state.borrow::<SharedJsState>().clone();
+    with_state(&js_state, |s| {
         let Some(entry) = s.windows.get_mut(&window_id) else {
             return Err(window_not_found());
         };
@@ -533,8 +558,8 @@ fn remove_child(
 ) -> Result<(), deno_error::JsErrorBox> {
     let pid = parent_id as UzNodeId;
     let cid = child_id as UzNodeId;
-    let app_state = state.borrow::<SharedAppState>().clone();
-    with_state(&app_state, |s| {
+    let js_state = state.borrow::<SharedJsState>().clone();
+    with_state(&js_state, |s| {
         let Some(entry) = s.windows.get_mut(&window_id) else {
             return Err(window_not_found());
         };
@@ -549,8 +574,8 @@ fn detach_from_parent(
     child_id: u32,
 ) -> Result<(), deno_error::JsErrorBox> {
     let cid = child_id as UzNodeId;
-    let app_state = state.borrow::<SharedAppState>().clone();
-    with_state(&app_state, |s| {
+    let js_state = state.borrow::<SharedJsState>().clone();
+    with_state(&js_state, |s| {
         let Some(entry) = s.windows.get_mut(&window_id) else {
             return Err(window_not_found());
         };
@@ -569,8 +594,8 @@ fn set_text(
     text: String,
 ) -> Result<(), deno_error::JsErrorBox> {
     let nid = node_id as UzNodeId;
-    let app_state = state.borrow::<SharedAppState>().clone();
-    with_state(&app_state, |s| {
+    let js_state = state.borrow::<SharedJsState>().clone();
+    with_state(&js_state, |s| {
         let Some(entry) = s.windows.get_mut(&window_id) else {
             return Err(window_not_found());
         };
@@ -579,40 +604,20 @@ fn set_text(
     })
 }
 
-fn set_str_attribute(state: &mut OpState, window_id: u32, node_id: u32, name: &str, value: &str) {
+fn set_attribute(state: &mut OpState, window_id: u32, node_id: u32, name: &str, value: &str) {
     let nid = node_id as UzNodeId;
-    let app_state = state.borrow::<SharedAppState>().clone();
-    with_state(&app_state, |s| {
+    let js_state = state.borrow::<SharedJsState>().clone();
+    with_state(&js_state, |s| {
         if let Some(entry) = s.windows.get_mut(&window_id) {
-            entry.set_str_attribute(nid, name, value);
-        }
-    });
-}
-
-fn set_number_attribute(state: &mut OpState, window_id: u32, node_id: u32, name: &str, value: f64) {
-    let nid = node_id as UzNodeId;
-    let app_state = state.borrow::<SharedAppState>().clone();
-    with_state(&app_state, |s| {
-        if let Some(entry) = s.windows.get_mut(&window_id) {
-            entry.set_number_attribute(nid, name, value);
-        }
-    });
-}
-
-fn set_bool_attribute(state: &mut OpState, window_id: u32, node_id: u32, name: &str, value: bool) {
-    let nid = node_id as UzNodeId;
-    let app_state = state.borrow::<SharedAppState>().clone();
-    with_state(&app_state, |s| {
-        if let Some(entry) = s.windows.get_mut(&window_id) {
-            entry.set_bool_attribute(nid, name, value);
+            entry.set_attribute(nid, name, value);
         }
     });
 }
 
 fn clear_attribute(state: &mut OpState, window_id: u32, node_id: u32, name: &str) {
     let nid = node_id as UzNodeId;
-    let app_state = state.borrow::<SharedAppState>().clone();
-    with_state(&app_state, |s| {
+    let js_state = state.borrow::<SharedJsState>().clone();
+    with_state(&js_state, |s| {
         if let Some(entry) = s.windows.get_mut(&window_id) {
             entry.clear_attribute(nid, name);
         }
@@ -626,8 +631,8 @@ fn get_attribute(
     name: &str,
 ) -> Result<Value, deno_error::JsErrorBox> {
     let nid = node_id as UzNodeId;
-    let app_state = state.borrow::<SharedAppState>().clone();
-    with_state(&app_state, |s| {
+    let js_state = state.borrow::<SharedJsState>().clone();
+    with_state(&js_state, |s| {
         let Some(entry) = s.windows.get(&window_id) else {
             return Ok(Value::Null);
         };
@@ -642,15 +647,15 @@ pub fn op_focus_element(
     #[smi] node_id: u32,
 ) -> Result<(), deno_error::JsErrorBox> {
     let nid = node_id as UzNodeId;
-    let app_state = state.borrow::<SharedAppState>().clone();
-    with_state(&app_state, |s| {
+    let js_state = state.borrow::<SharedJsState>().clone();
+    with_state(&js_state, |s| {
         let Some(entry) = s.windows.get_mut(&window_id) else {
             return Err(window_not_found());
         };
         entry.dom.focus_element(nid);
         entry.dom.request_scroll_focus_into_view(nid);
-        if let Some(handle) = entry.handle.as_ref() {
-            handle.winit_window.request_redraw();
+        if let Some(window) = entry.window.as_ref() {
+            window.request_redraw();
         }
         Ok(())
     })
@@ -664,8 +669,8 @@ pub fn op_get_ancestor_path(
     #[smi] node_id: u32,
 ) -> Result<Vec<u32>, deno_error::JsErrorBox> {
     let nid = node_id as UzNodeId;
-    let app_state = state.borrow::<SharedAppState>().clone();
-    with_state(&app_state, |s| {
+    let js_state = state.borrow::<SharedJsState>().clone();
+    with_state(&js_state, |s| {
         let Some(entry) = s.windows.get(&window_id) else {
             return Ok(Vec::new());
         };
@@ -703,8 +708,8 @@ pub fn op_get_selection(
         text: String,
     }
 
-    let app_state = state.borrow::<SharedAppState>().clone();
-    with_state(&app_state, |s| {
+    let js_state = state.borrow::<SharedJsState>().clone();
+    with_state(&js_state, |s| {
         let Some(entry) = s.windows.get(&window_id) else {
             return Ok(serde_json::Value::Null);
         };
@@ -740,8 +745,8 @@ pub fn op_get_selected_text(
     state: &mut OpState,
     #[smi] window_id: u32,
 ) -> Result<String, deno_error::JsErrorBox> {
-    let app_state = state.borrow::<SharedAppState>().clone();
-    with_state(&app_state, |s| {
+    let js_state = state.borrow::<SharedJsState>().clone();
+    with_state(&js_state, |s| {
         let Some(entry) = s.windows.get(&window_id) else {
             return Ok(String::new());
         };

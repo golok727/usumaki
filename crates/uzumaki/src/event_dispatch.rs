@@ -1,14 +1,45 @@
+use bitflags::bitflags;
 use serde::Serialize;
 use winit::keyboard::{Key, NamedKey};
 
-use crate::clipboard::SystemClipboard;
+use crate::clipboard::ClipboardBridge;
 use crate::input::{KeyResult, input_align_offset};
+use crate::layout::TaffyLayoutExt;
 use crate::node::{ScrollAxis, UzNodeId};
 use crate::selection::{Affinity, SelectionEndpoint, TextSelection};
 use crate::style::TextStyle;
 use crate::text::{apply_text_style_to_editor, secure_cursor_geometry};
 use crate::ui::{DragMode, ScrollDragState, ScrollWheelTarget, UIState};
 use crate::window::Window;
+
+bitflags! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+    pub struct KeyModifiers: u32 {
+        const CTRL  = 1 << 0;
+        const ALT   = 1 << 1;
+        const SHIFT = 1 << 2;
+        const SUPER = 1 << 3;
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+    pub struct MouseButtons: u8 {
+        const LEFT   = 1 << 0;
+        const RIGHT  = 1 << 1;
+        const MIDDLE = 1 << 2;
+    }
+}
+
+impl Serialize for KeyModifiers {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_u32(self.bits())
+    }
+}
+
+impl Serialize for MouseButtons {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_u8(self.bits())
+    }
+}
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -20,7 +51,7 @@ pub struct MouseEventData {
     pub screen_x: f32,
     pub screen_y: f32,
     pub button: u8,
-    pub buttons: u8,
+    pub buttons: MouseButtons,
 }
 
 #[derive(Serialize)]
@@ -31,7 +62,7 @@ pub struct KeyEventData {
     pub key: String,
     pub code: String,
     pub key_code: u32,
-    pub modifiers: u32,
+    pub modifiers: KeyModifiers,
     pub repeat: bool,
 }
 
@@ -39,6 +70,13 @@ pub struct KeyEventData {
 #[serde(rename_all = "camelCase")]
 pub struct WindowLoadEventData {
     pub window_id: u32,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThemeChangedEventData {
+    pub window_id: u32,
+    pub theme: String,
 }
 
 #[derive(Serialize)]
@@ -94,18 +132,16 @@ pub enum AppEvent {
     WindowLoad(WindowLoadEventData),
     #[serde(rename = "windowClose")]
     WindowClose(WindowLoadEventData),
+    #[serde(rename = "themeChanged")]
+    ThemeChanged(ThemeChangedEventData),
     HotReload,
-}
-
-pub fn handle_redraw(dom: &mut UIState, handle: &mut Window) {
-    handle.paint_and_present(dom);
 }
 
 pub struct FocusedInputLayoutMeta {
     pub taffy_x: f64,
     pub taffy_y: f64,
-    pub input_padding: f32,
-    pub top_pad: f32,
+    pub content_x: f32,
+    pub content_y: f32,
     pub multiline: bool,
     pub text_style: TextStyle,
     pub input_width: f32,
@@ -115,21 +151,19 @@ pub struct FocusedInputLayoutMeta {
 pub fn input_layout_meta(dom: &UIState, focused_id: UzNodeId) -> Option<FocusedInputLayoutMeta> {
     let node = dom.nodes.get(focused_id)?;
     let is = node.as_text_input()?;
-    let input_padding = node.style.padding.left;
-    let top_pad = node.style.padding.top;
-    let pad_h = node.style.padding.left + node.style.padding.right;
-    let text_style = node.style.text.clone();
+    let text_style = node.computed_style().text.clone();
     let hb = node.hitbox_id.and_then(|hid| dom.hitbox_store.get(hid))?;
     let layout = &node.final_layout;
+    let content_box = layout.content_box_bounds();
     Some(FocusedInputLayoutMeta {
         taffy_x: hb.bounds.x,
         taffy_y: hb.bounds.y,
-        input_padding,
-        top_pad,
+        content_x: content_box.x as f32,
+        content_y: content_box.y as f32,
         multiline: is.multiline,
         text_style,
-        input_width: (layout.size.width - pad_h).max(0.0),
-        input_height: layout.size.height,
+        input_width: content_box.width as f32,
+        input_height: content_box.height as f32,
     })
 }
 
@@ -171,11 +205,13 @@ fn set_ime_cursor_area(
     scroll_offset_y: f32,
 ) {
     let line_height = (meta.text_style.font_size * meta.text_style.line_height).round() as f64;
-    let text_origin_x = meta.taffy_x + meta.input_padding as f64;
+    let text_origin_x = meta.taffy_x + meta.content_x as f64;
     let text_origin_y = if meta.multiline {
-        meta.taffy_y + meta.top_pad as f64 - scroll_offset_y as f64
+        meta.taffy_y + meta.content_y as f64 - scroll_offset_y as f64
     } else {
-        meta.taffy_y + ((meta.input_height as f64 - line_height) / 2.0).max(0.0)
+        meta.taffy_y
+            + meta.content_y as f64
+            + ((meta.input_height as f64 - line_height) / 2.0).max(0.0)
     };
     let position =
         winit::dpi::LogicalPosition::new(text_origin_x + ime_area.x0, text_origin_y + ime_area.y0);
@@ -183,7 +219,7 @@ fn set_ime_cursor_area(
         (ime_area.x1 - ime_area.x0).max(24.0) as f32,
         (ime_area.y1 - ime_area.y0).max(1.0) as f32,
     );
-    handle.winit_window.set_ime_cursor_area(position, size);
+    handle.set_ime_cursor_area(position, size);
 }
 
 pub fn update_ime_cursor_area(dom: &mut UIState, handle: &mut Window) {
@@ -270,11 +306,8 @@ pub fn scroll_input_to_cursor(dom: &mut UIState, handle: &mut Window) {
         if let Some(rect) = cursor_rect {
             if meta.multiline {
                 let line_height = (meta.text_style.font_size * meta.text_style.line_height).round();
-                node.scroll_state.scroll_input_y(
-                    rect.y0 as f32,
-                    line_height,
-                    meta.input_height - meta.top_pad * 2.0,
-                );
+                node.scroll_state
+                    .scroll_input_y(rect.y0 as f32, line_height, meta.input_height);
             } else {
                 let display_text = is.display_text();
                 let natural_w = handle
@@ -313,12 +346,16 @@ pub fn handle_cursor_moved(
     dom: &mut UIState,
     handle: &mut Window,
     position: winit::dpi::PhysicalPosition<f64>,
-    mouse_buttons: u8,
+    mouse_buttons: MouseButtons,
 ) -> bool {
     let mut needs_redraw = false;
-    let scale = handle.winit_window.scale_factor();
+    let scale = handle.scale_factor();
     let logical_x = position.x / scale;
     let logical_y = position.y / scale;
+    // Burst-scroll inputs may have left the hit tree stale before this
+    // event arrived — refresh against current scroll state so the cursor
+    // hits what the user actually sees.
+    dom.ensure_hit_tree_fresh(&mut handle.text_renderer, scale);
     let old_top = dom.hit_state.top_node;
     dom.update_hit_test(logical_x, logical_y);
     if old_top != dom.hit_state.top_node {
@@ -343,18 +380,18 @@ pub fn handle_cursor_moved(
         if let Some(node) = dom.nodes.get_mut(nid) {
             node.scroll_state.set_offset(axis, clamped);
         }
+        dom.hit_tree_dirty = true;
         needs_redraw = true;
     }
 
     // Input drag selection
-    if mouse_buttons & 1 != 0 {
+    if mouse_buttons.contains(MouseButtons::LEFT) {
         if let DragMode::InputSelection(drag_nid) = dom.drag_mode {
             let hit_info = dom.nodes.get(drag_nid).and_then(|node| {
                 let is = node.as_text_input()?;
                 let scroll_offset_x = node.scroll_state.scroll_offset_x;
                 let scroll_offset_y = node.scroll_state.scroll_offset_y;
-                let input_padding = node.style.padding.left as f64;
-                let top_pad = node.style.padding.top;
+                let content_box = node.final_layout.content_box_bounds();
                 let hb = node
                     .hitbox_id
                     .and_then(|hid| dom.hitbox_store.get(hid))?
@@ -363,20 +400,14 @@ pub fn handle_cursor_moved(
                     scroll_offset_x,
                     scroll_offset_y,
                     is.multiline,
-                    input_padding,
-                    top_pad,
+                    content_box.x,
+                    content_box.y,
                     hb,
                 ))
             });
 
-            if let Some((
-                scroll_offset,
-                scroll_offset_y,
-                is_multiline,
-                input_padding,
-                top_pad,
-                hb,
-            )) = hit_info
+            if let Some((scroll_offset, scroll_offset_y, is_multiline, content_x, content_y, hb)) =
+                hit_info
             {
                 // Apply styles/width so the driver's layout accounts for
                 // wrapping; also gives us a fresh natural width for align_offset.
@@ -398,11 +429,11 @@ pub fn handle_cursor_moved(
                     single_line_align_offset(dom, handle, drag_nid)
                 };
                 let relative_x = if is_multiline {
-                    (logical_x - hb.x - input_padding) as f32
+                    (logical_x - hb.x - content_x) as f32
                 } else {
-                    (logical_x - hb.x - input_padding) as f32 + scroll_offset - align_offset
+                    (logical_x - hb.x - content_x) as f32 + scroll_offset - align_offset
                 };
-                let relative_y = (logical_y - hb.y) as f32 + scroll_offset_y - top_pad;
+                let relative_y = (logical_y - hb.y - content_y) as f32 + scroll_offset_y;
 
                 if let Some(node) = dom.nodes.get_mut(drag_nid)
                     && let Some(is) = node.as_text_input_mut()
@@ -425,8 +456,11 @@ pub fn handle_cursor_moved(
                 logical_y,
             )
         {
-            if dom.selection_root(&dom.text_selection) == Some(root_id) {
-                dom.text_selection.focus = Some(hit.endpoint);
+            if let Some(selection) = dom.get_text_selection()
+                && dom.selection_root(&selection) == Some(root_id)
+                && let Some(anchor) = selection.anchor
+            {
+                dom.set_selection(TextSelection::new(anchor, hit.endpoint));
             }
             needs_redraw = true;
         }
@@ -463,54 +497,76 @@ fn hit_text_in_run(
         .iter()
         .find(|r| r.root_id == root_id)?;
 
-    // Find the text node closest to mouse position
     let mut best: Option<(UzNodeId, f64, Bounds)> = None;
     for entry in &run.entries {
-        let node = dom.nodes.get(entry.node_id)?;
+        let node = dom.nodes.get(entry.layout_node_id)?;
         let hid = node.hitbox_id?;
         let hb = dom.hitbox_store.get(hid)?;
         let dist = point_to_rect_dist(mx, my, &hb.bounds);
         if best.is_none() || dist < best.unwrap().1 {
-            best = Some((entry.node_id, dist, hb.bounds));
+            best = Some((entry.layout_node_id, dist, hb.bounds));
         }
     }
 
-    let (node_id, _, bounds) = best?;
-    let node = dom.nodes.get(node_id)?;
-    let text = node.get_text_content()?;
+    let (layout_node_id, _, bounds) = best?;
+    let node = dom.nodes.get(layout_node_id)?;
+    let text_len = node
+        .as_element()
+        .and_then(|element| element.inline_layout.as_ref())
+        .map(|inline| inline.text_len)
+        .or_else(|| node.get_text_content().map(|text| text.content.len()))?;
 
-    if text.content.is_empty() {
+    if text_len == 0 {
+        let entry = run
+            .entries
+            .iter()
+            .find(|entry| entry.layout_node_id == layout_node_id)?;
         return Some(TextRunHit {
-            node_id,
-            endpoint: SelectionEndpoint::new(node_id, 0, Affinity::Downstream),
+            node_id: entry.node_id,
+            endpoint: SelectionEndpoint::new(entry.node_id, 0, Affinity::Downstream),
         });
     }
 
-    let relative_x = (mx - bounds.x) as f32;
-    let relative_y = (my - bounds.y) as f32;
-    // Hit-test against the cached parley layout the painter uses, so mouse
-    // byte offset stays consistent with what's drawn (the cached layout is
-    // built with the inherited computed style; node.style.text is raw).
-    let (offset, affinity) = if let Some(layout) = node.text_layout.as_ref() {
-        crate::text::hit_to_text_position_from_layout(
-            layout,
-            text.content.len(),
-            relative_x,
-            relative_y,
-        )
+    let content_box = node.final_layout.content_box_bounds();
+    let relative_x = (mx - bounds.x - content_box.x) as f32;
+    let relative_y = (my - bounds.y - content_box.y) as f32;
+    let (global_offset, affinity) = if let Some(layout) = node
+        .as_element()
+        .and_then(|element| element.inline_layout.as_ref())
+        .map(|inline| &inline.layout)
+    {
+        crate::text::hit_to_text_position_from_layout(layout, text_len, relative_x, relative_y)
     } else {
+        let text = node.get_text_content()?;
         text_renderer.hit_to_text_position(
             &text.content,
-            &node.style.text,
-            Some(bounds.width as f32),
+            &node.computed_style().text,
+            Some(content_box.width as f32),
             relative_x,
             relative_y,
         )
     };
 
+    let entry = run
+        .entries
+        .iter()
+        .find(|entry| {
+            entry.layout_node_id == layout_node_id
+                && global_offset >= entry.flat_byte_start
+                && global_offset <= entry.flat_byte_start + entry.byte_len
+        })
+        .or_else(|| {
+            run.entries
+                .iter()
+                .find(|entry| entry.layout_node_id == layout_node_id)
+        })?;
+    let offset = global_offset
+        .saturating_sub(entry.flat_byte_start)
+        .min(entry.byte_len);
+
     Some(TextRunHit {
-        node_id,
-        endpoint: SelectionEndpoint::new(node_id, offset, affinity),
+        node_id: entry.node_id,
+        endpoint: SelectionEndpoint::new(entry.node_id, offset, affinity),
     })
 }
 
@@ -530,58 +586,94 @@ fn text_range_at_point(
     my: f64,
     select_line: bool,
 ) -> Option<(SelectionEndpoint, SelectionEndpoint)> {
-    let (_run, _entry) = dom.find_run_entry_for_node(node_id)?;
-    let node = dom.nodes.get(node_id)?;
-    let text = node.get_text_content()?;
-    let bounds = node
+    let (run, entry) = dom.find_run_entry_for_node(node_id)?;
+    let layout_node = dom.nodes.get(entry.layout_node_id)?;
+    let text_len = layout_node
+        .as_element()
+        .and_then(|element| element.inline_layout.as_ref())
+        .map(|inline| inline.text_len)
+        .or_else(|| {
+            layout_node
+                .get_text_content()
+                .map(|text| text.content.len())
+        })?;
+    let bounds = layout_node
         .hitbox_id
         .and_then(|hid| dom.hitbox_store.get(hid))
         .map(|hb| hb.bounds)?;
 
-    if text.content.is_empty() {
+    if text_len == 0 {
         let endpoint = SelectionEndpoint::new(node_id, 0, Affinity::Downstream);
         return Some((endpoint, endpoint));
     }
 
-    let rel_x = (mx - bounds.x) as f32;
-    let rel_y = (my - bounds.y) as f32;
-    let (local_start, local_end) = if let Some(layout) = node.text_layout.as_ref() {
+    let content_box = layout_node.final_layout.content_box_bounds();
+    let rel_x = (mx - bounds.x - content_box.x) as f32;
+    let rel_y = (my - bounds.y - content_box.y) as f32;
+    let (global_start, global_end) = if let Some(layout) = layout_node
+        .as_element()
+        .and_then(|element| element.inline_layout.as_ref())
+        .map(|inline| &inline.layout)
+    {
         if select_line {
-            crate::text::line_byte_range_at_point_from_layout(
-                layout,
-                text.content.len(),
-                rel_x,
-                rel_y,
-            )
+            crate::text::line_byte_range_at_point_from_layout(layout, text_len, rel_x, rel_y)
         } else {
-            crate::text::word_byte_range_at_point_from_layout(
-                layout,
-                text.content.len(),
-                rel_x,
-                rel_y,
-            )
+            crate::text::word_byte_range_at_point_from_layout(layout, text_len, rel_x, rel_y)
         }
     } else if select_line {
+        let text = layout_node.get_text_content()?;
         text_renderer.line_byte_range_at_point(
             &text.content,
-            &node.style.text,
-            Some(bounds.width as f32),
+            &layout_node.computed_style().text,
+            Some(content_box.width as f32),
             rel_x,
             rel_y,
         )
     } else {
+        let text = layout_node.get_text_content()?;
         text_renderer.word_byte_range_at_point(
             &text.content,
-            &node.style.text,
-            Some(bounds.width as f32),
+            &layout_node.computed_style().text,
+            Some(content_box.width as f32),
             rel_x,
             rel_y,
         )
     };
 
-    Some((
-        SelectionEndpoint::new(node_id, local_start, Affinity::Downstream),
-        SelectionEndpoint::new(node_id, local_end, Affinity::Upstream),
+    let start = endpoint_for_layout_byte(
+        run,
+        entry.layout_node_id,
+        global_start,
+        Affinity::Downstream,
+    )?;
+    let end = endpoint_for_layout_byte(run, entry.layout_node_id, global_end, Affinity::Upstream)?;
+    Some((start, end))
+}
+
+fn endpoint_for_layout_byte(
+    run: &crate::element::TextSelectRun,
+    layout_node_id: UzNodeId,
+    byte: usize,
+    affinity: Affinity,
+) -> Option<SelectionEndpoint> {
+    let entry = run
+        .entries
+        .iter()
+        .find(|entry| {
+            entry.layout_node_id == layout_node_id
+                && byte >= entry.flat_byte_start
+                && byte <= entry.flat_byte_start + entry.byte_len
+        })
+        .or_else(|| {
+            run.entries
+                .iter()
+                .find(|entry| entry.layout_node_id == layout_node_id)
+        })?;
+    Some(SelectionEndpoint::new(
+        entry.node_id,
+        byte.saturating_sub(entry.flat_byte_start)
+            .min(entry.byte_len),
+        affinity,
     ))
 }
 
@@ -591,9 +683,18 @@ pub fn handle_mouse_input(
     wid: u32,
     btn_state: winit::event::ElementState,
     button: winit::event::MouseButton,
-    mouse_buttons: u8,
+    mouse_buttons: MouseButtons,
 ) -> (bool, Vec<AppEvent>) {
     use winit::event::ElementState;
+
+    // Defensive: a programmatic scroll or other mutation since the last
+    // input event may have flagged the hit tree dirty. Refresh before
+    // dispatching so clicks land where the user sees them.
+    let scale = handle.scale_factor();
+    dom.ensure_hit_tree_fresh(&mut handle.text_renderer, scale);
+    if let Some((mx, my)) = dom.hit_state.mouse_position {
+        dom.update_hit_test(mx, my);
+    }
 
     let mut needs_redraw = false;
     let mut events: Vec<AppEvent> = Vec::new();
@@ -723,8 +824,7 @@ pub fn handle_mouse_input(
                         let is = node.as_text_input().unwrap();
                         let scroll_offset_x = node.scroll_state.scroll_offset_x;
                         let scroll_offset_y = node.scroll_state.scroll_offset_y;
-                        let input_padding = node.style.padding.left as f64;
-                        let top_pad = node.style.padding.top;
+                        let content_box = node.final_layout.content_box_bounds();
                         let hb = node
                             .hitbox_id
                             .and_then(|hid| dom.hitbox_store.get(hid))
@@ -733,8 +833,8 @@ pub fn handle_mouse_input(
                             scroll_offset_x,
                             scroll_offset_y,
                             is.multiline,
-                            input_padding,
-                            top_pad,
+                            content_box.x,
+                            content_box.y,
                             hb,
                         )
                     };
@@ -742,8 +842,8 @@ pub fn handle_mouse_input(
                         scroll_offset,
                         scroll_offset_y,
                         is_multiline,
-                        input_padding,
-                        top_pad,
+                        content_x,
+                        content_y,
                         hitbox_bounds,
                     ) = click_info;
 
@@ -769,11 +869,11 @@ pub fn handle_mouse_input(
                             single_line_align_offset(dom, handle, nid)
                         };
                         let relative_x = if is_multiline {
-                            (mx - hb.x - input_padding) as f32
+                            (mx - hb.x - content_x) as f32
                         } else {
-                            (mx - hb.x - input_padding) as f32 + scroll_offset - align_offset
+                            (mx - hb.x - content_x) as f32 + scroll_offset - align_offset
                         };
-                        let relative_y = (my - hb.y) as f32 + scroll_offset_y - top_pad;
+                        let relative_y = (my - hb.y - content_y) as f32 + scroll_offset_y;
 
                         if let Some(node) = dom.nodes.get_mut(nid)
                             && let Some(is) = node.as_text_input_mut()
@@ -963,7 +1063,7 @@ pub fn build_key_event(
     dom: &UIState,
     wid: u32,
     key_event: &winit::event::KeyEvent,
-    modifiers: u32,
+    modifiers: KeyModifiers,
 ) -> Option<AppEvent> {
     use winit::event::ElementState;
     use winit::keyboard::PhysicalKey;
@@ -1009,7 +1109,7 @@ pub fn handle_key_for_input(
     handle: &mut Window,
     wid: u32,
     key_event: &winit::event::KeyEvent,
-    modifiers: u32,
+    modifiers: KeyModifiers,
 ) -> (bool, Vec<AppEvent>) {
     use winit::event::ElementState;
 
@@ -1176,7 +1276,7 @@ pub fn handle_key_for_button(
             screen_x: x,
             screen_y: y,
             button: 0,
-            buttons: 0,
+            buttons: MouseButtons::empty(),
         })],
     )
 }
@@ -1193,7 +1293,7 @@ pub fn handle_tab_focus(
     dom: &mut UIState,
     wid: u32,
     key_event: &winit::event::KeyEvent,
-    modifiers: u32,
+    modifiers: KeyModifiers,
 ) -> TabFocusOutcome {
     use winit::event::ElementState;
 
@@ -1211,7 +1311,7 @@ pub fn handle_tab_focus(
 
     outcome.consumed = true;
 
-    let shift = modifiers & 4 != 0;
+    let shift = modifiers.contains(KeyModifiers::SHIFT);
     let change = if shift {
         dom.focus_prev_node()
     } else {
@@ -1243,7 +1343,7 @@ pub fn handle_tab_focus(
 pub fn handle_key_for_view_selection(
     dom: &mut UIState,
     key_event: &winit::event::KeyEvent,
-    modifiers: u32,
+    modifiers: KeyModifiers,
 ) -> bool {
     use winit::event::ElementState;
 
@@ -1279,8 +1379,8 @@ pub fn handle_key_for_view_selection(
         return false;
     }
 
-    let shift = modifiers & 4 != 0;
-    let ctrl = modifiers & 1 != 0;
+    let shift = modifiers.contains(KeyModifiers::SHIFT);
+    let ctrl = modifiers.contains(KeyModifiers::CTRL);
 
     match &key_event.logical_key {
         Key::Named(NamedKey::ArrowLeft) if shift && ctrl => {
@@ -1393,8 +1493,8 @@ fn resolve_clipboard_target(dom: &UIState) -> Option<ClipboardTarget> {
 pub fn build_clipboard_command(
     dom: &UIState,
     key_event: &winit::event::KeyEvent,
-    modifiers: u32,
-    clipboard: &mut SystemClipboard,
+    modifiers: KeyModifiers,
+    clipboard: &ClipboardBridge<'_>,
 ) -> Option<ClipboardCommand> {
     use winit::event::ElementState;
 
@@ -1402,7 +1502,7 @@ pub fn build_clipboard_command(
         return None;
     }
 
-    let ctrl = modifiers & 1 != 0;
+    let ctrl = modifiers.contains(KeyModifiers::CTRL);
     if !ctrl {
         return None;
     }
@@ -1544,7 +1644,7 @@ pub fn apply_clipboard_command(
     cmd: ClipboardCommand,
     dom: &mut UIState,
     wid: u32,
-    clipboard: &mut SystemClipboard,
+    clipboard: &ClipboardBridge<'_>,
     text_renderer: &mut crate::text::TextRenderer,
 ) -> (bool, Vec<AppEvent>) {
     let mut events = Vec::new();
@@ -1625,17 +1725,22 @@ pub fn handle_mouse_wheel(
     }
 
     if needs_redraw {
+        // Rebuild now so subsequent input events in this same frame (or
+        // the next, before paint) see post-scroll geometry. The scroll
+        // bug was: clicks during a fast wheel burst hit the previous
+        // frame's hitboxes because paint hadn't refreshed them yet.
+        let scale = handle.scale_factor();
+        crate::hit_tree::rebuild(dom, &mut handle.text_renderer, scale);
+        // And re-hit-test the cursor so hover/active state matches what
+        // the user now sees under the pointer.
+        dom.update_hit_test(mx, my);
         update_ime_cursor_area(dom, handle);
     }
     needs_redraw
 }
 
-/// Route a single-axis wheel delta to the innermost scrollable under the
-/// pointer that can scroll on that axis. Scroll thumbs are registered in
-/// tree-walk order (parents before children); iterating in reverse picks the
-/// deepest match — which is what users expect for nested scrollables.
 fn apply_wheel_axis(dom: &mut UIState, mx: f64, my: f64, axis: ScrollAxis, delta: f64) -> bool {
-    const SCROLL_LOCK_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(150);
+    const SCROLL_LOCK_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(200);
 
     // Honour the existing wheel capture for momentum/inertia continuity, but
     // only when the captured node is actually scrollable on this axis.
@@ -1649,14 +1754,17 @@ fn apply_wheel_axis(dom: &mut UIState, mx: f64, my: f64, axis: ScrollAxis, delta
         }
     });
 
-    let target = if let Some(t) = locked {
-        Some(t.node_id)
+    let (target, locked_to_target) = if let Some(t) = locked {
+        (Some(t.node_id), true)
     } else {
-        dom.scroll_thumbs
-            .iter()
-            .rev()
-            .find(|t| t.axis == axis && t.view_bounds.contains(mx, my))
-            .map(|t| t.node_id)
+        (
+            dom.scroll_thumbs
+                .iter()
+                .rev()
+                .find(|t| t.axis == axis && t.view_bounds.contains(mx, my))
+                .map(|t| t.node_id),
+            false,
+        )
     };
 
     let Some(mut nid) = target else {
@@ -1679,7 +1787,19 @@ fn apply_wheel_axis(dom: &mut UIState, mx: f64, my: f64, axis: ScrollAxis, delta
             }
         }
 
-        let Some(parent) = dom.nodes.get(nid).and_then(|node| node.parent) else {
+        // While the wheel is locked to a previously-captured node, refuse
+        // to chain into ancestors even if the captured node is saturated.
+        // The user must pause wheeling for SCROLL_LOCK_TIMEOUT before the
+        // parent can take over
+        if locked_to_target {
+            capture_node = Some(nid);
+            break;
+        }
+
+        // Wheel bubbles up the layout tree (matches CSS scroll
+        // containment) so an anonymous wrapper between the cursor and a
+        // scrollable ancestor doesn't break wheel propagation.
+        let Some(parent) = dom.nodes.get(nid).and_then(|node| node.layout_parent) else {
             break;
         };
         nid = parent;

@@ -43,7 +43,6 @@ export function Table<T>({
         bg={headerBg}
         borderBottom={1}
         borderColor={C.border}
-        textWrap="nowrap"
       >
         {columns.map((col, _i) => (
           <view
@@ -83,6 +82,8 @@ export function Table<T>({
                 display="flex"
                 items="center"
                 justify={col.align}
+                minW={0}
+                textWrap="wrap"
               >
                 {col.render ? (
                   col.render(row, rowIndex)

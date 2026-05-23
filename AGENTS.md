@@ -2,60 +2,53 @@
 
 ## Package Manager
 
-Use pnpm for all package management commands (not npm or yarn).
+- Use `pnpm` for all repo commands. Never `npm` or `yarn`.
+- Exception: end-user install docs use `npm install -g` / `npm install -D`.
+- Add deps without pinning versions: `pnpm add <pkg>`. Verify latest with `npm view <pkg> version` if unsure.
 
-Exception: end-user install instructions should use `npm install -g` (global) or `npm install -D` (project dev dependency) since npm is universal.
+## Style Constraints
 
-## Dependencies
+- No emojis anywhere in code, comments, output, or docs.
+- No `--` as a dash in prose or user-facing output. Use `—` if a dash is truly needed, but prefer rephrasing. CLI flags are the only exception.
+- JS files under `crates/uzumaki/js/` are V8 snapshot candidates: strict ASCII only (0x00 to 0x7F). Use `\u2014`-style escapes if a non-ASCII char is truly required.
 
-Always check for the latest npm version when adding dependencies. Use `pnpm add <package>` (without version) to get the latest, or verify with `npm view <package> version` first.
+## Comments
 
-## No Emojis
-
-Do not use emojis anywhere in this repository — code, comments, output, or docs.
-
-## Dashes
-
-Never use `--` as a dash in prose, comments, or user-facing output. Use an em dash (—) when a dash is needed, but prefer rephrasing to avoid dashes entirely. The only exception is CLI flags (e.g. `--port`).
-
-## Boolean Environment Variables
-
-Document boolean env vars using only `0` and `1` in CLI help, docs, and README. Code may accept `true`/`false` as well, but these alternatives are not documented.
+- Keep comments minimal. Avoid them unless genuinely required.
+- No comments explaining what changed, what was fixed, or why a patch was applied. Code stands on its own.
+- No comments on internal implementation unless something is genuinely non-obvious.
+- JSDoc only on user-facing JS APIs that generate types.
+- For internal members on user-facing APIs, default to the `private` keyword. Only fall back to `__` prefix with `@internal` JSDoc when `private` is not viable (e.g. cross-file access, runtime visibility needed).
+- Never remove existing comments or commented-out code. They are intentional. Only touch them if explicitly asked.
 
 ## Coding Style
 
-Rust follows standard `rustfmt` conventions: 4-space indentation, `snake_case` modules/functions, `PascalCase` types. TypeScript and TSX use Prettier with semicolons and single quotes; 2-space indentation.
+- Rust: standard `rustfmt`. 4-space indent, `snake_case`, `PascalCase` types.
+- TS/TSX: Prettier, semicolons, single quotes, 2-space indent.
 
-### Rust 2024 idioms
+## Rust 2024 Idioms
 
-Write idiomatic Rust 2024. In particular:
+- Use `if let` chains: `if let Some(x) = foo && cond` over nested `if let`.
+- Prefer `let else` for early returns over nested `if let`.
+- No nested `if` where a single `if let ... && ...` chain works.
 
-- Use `if let` chains instead of nested `if let` blocks. Rust 2024 stabilized `if let` chains — prefer `if let Some(x) = foo && condition` over nesting.
-- Prefer `let else` for early returns over nested `if let` when the happy path should continue flat.
-- Do not write nested `if` blocks where a single `if let ... && ...` chain would do.
+## Implementation Approach
 
-When implementing changes:
-
-- Ask when you have real doubt instead of making risky assumptions
-- Keep code easy to test and easy to change later
-- Avoid overcomplicated abstractions
-- If there is a genuinely better and simpler fix, do that instead of patching around the problem
-- Use comments sparingly and only when they add real value
+- Prefer generic, reusable solutions over one-off fixes when it is a clean win.
+- Do not hardcode logic around a single bug if the underlying problem solves cleanly at a more general level.
+- Do not over-engineer for hypothetical cases.
+- Ask when there is real doubt. Do not make risky assumptions.
+- Keep code easy to test and easy to change.
+- If there is a genuinely simpler fix, do that instead of patching around the problem.
 
 ## Validation
 
-**Prefer `cargo check` over `cargo build`** for verifying Rust changes — it is faster and sufficient for catching type and borrow errors.
-
-When you need to check Rust code, run against the runtime crate:
-
-```
-cargo check -p uzumaki_runtime
-```
-
-The `uzumaki` crate is the CLI. Only check or build it when the change touches CLI code specifically. Do not default to checking the whole workspace or building unless there is a concrete reason.
-
-Add focused tests near the code you change when it makes sense. Rust unit tests live inline in `mod tests` blocks near the relevant module.
+- Use `cargo check` over `cargo build`. Faster, catches type and borrow errors.
+- Default target: `cargo check -p uzumaki_runtime`.
+- The `uzumaki` crate is the CLI. Only check it when changes touch CLI code.
+- Do not check the whole workspace without a concrete reason.
+- Add focused tests near the code you change. Rust unit tests go inline in `mod tests`.
 
 ## Documentation
 
-After implementing a notable feature, update the docs when needed — especially for user-facing API changes: new JS APIs, new JSX props, new events, or changes in expected playground usage.
+Update docs after notable features, especially user-facing changes: new JS APIs, JSX props, events, or playground usage.

@@ -97,7 +97,7 @@ export function ImagesPage() {
       flexDir="col"
       gap={0}
       h="full"
-      scroll
+      scrollY
       scrollbarWidth={8}
       scrollbarRadius={5}
     >

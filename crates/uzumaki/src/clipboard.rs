@@ -1,5 +1,9 @@
 use std::fmt;
 
+use winit::event_loop::EventLoopProxy;
+
+use crate::app::UserEvent;
+
 #[derive(Debug)]
 pub enum ClipboardError {
     Access(String),
@@ -13,6 +17,8 @@ impl fmt::Display for ClipboardError {
     }
 }
 
+/// OS-side clipboard. Owned by the main winit thread because macOS pasteboard
+/// APIs are tied to the main thread.
 pub struct SystemClipboard {
     inner: arboard::Clipboard,
 }
@@ -42,5 +48,45 @@ impl SystemClipboard {
         self.inner
             .set_text(text)
             .map_err(|e| ClipboardError::Access(e.to_string()))
+    }
+}
+
+/// JS-thread side of the clipboard. Forwards reads/writes to the main thread
+/// over `UserEvent` and blocks on a flume reply. Cheap because clipboard ops
+/// are an OS round-trip anyway.
+pub struct ClipboardBridge<'a> {
+    proxy: &'a EventLoopProxy<UserEvent>,
+}
+
+impl<'a> ClipboardBridge<'a> {
+    pub fn new(proxy: &'a EventLoopProxy<UserEvent>) -> Self {
+        Self { proxy }
+    }
+
+    pub fn read_text(&self) -> Result<Option<String>, ClipboardError> {
+        let (tx, rx) = flume::bounded(1);
+        self.proxy
+            .send_event(UserEvent::ClipboardRead { reply: tx })
+            .map_err(|_| ClipboardError::Access("event loop closed".into()))?;
+        rx.recv()
+            .map_err(|_| ClipboardError::Access("clipboard reply dropped".into()))
+    }
+
+    pub fn write_text(&self, text: &str) -> Result<(), ClipboardError> {
+        let (tx, rx) = flume::bounded(1);
+        self.proxy
+            .send_event(UserEvent::ClipboardWrite {
+                text: text.to_string(),
+                reply: tx,
+            })
+            .map_err(|_| ClipboardError::Access("event loop closed".into()))?;
+        let ok = rx
+            .recv()
+            .map_err(|_| ClipboardError::Access("clipboard reply dropped".into()))?;
+        if ok {
+            Ok(())
+        } else {
+            Err(ClipboardError::Access("write failed".into()))
+        }
     }
 }

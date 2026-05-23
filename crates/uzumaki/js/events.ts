@@ -1,4 +1,5 @@
 import type { UzNode } from 'ext:uzumaki/node.ts';
+import type { ResolvedTheme, WindowTheme } from 'ext:uzumaki/types.ts';
 
 export const enum EventType {
   MouseMove = 0,
@@ -83,6 +84,15 @@ export interface UzumakiResizeEvent<
   readonly height: number;
 }
 
+export interface UzThemeChangeEvent<
+  T extends UzNode = UzNode,
+> extends UzumakiEvent<T> {
+  /** The effective theme after resolving `system` against the OS. */
+  readonly theme: ResolvedTheme;
+  /** The window's theme preference that produced `theme`. */
+  readonly preference: WindowTheme;
+}
+
 /** DOM-style events that can be attached to any element. */
 export interface UzEventMap {
   mousemove: UzMouseEvent;
@@ -105,6 +115,7 @@ export interface WindowEventMap extends UzEventMap {
   load: UzumakiEvent;
   close: UzumakiEvent;
   resize: UzumakiResizeEvent;
+  themechange: UzThemeChangeEvent;
 }
 
 export type EventName = keyof UzEventMap;
@@ -324,7 +335,7 @@ export function buildDomEvent(
 export function buildLifecycleEvent(
   type: string,
   payload: any,
-): UzumakiEvent | UzumakiResizeEvent {
+): UzumakiEvent | UzumakiResizeEvent | UzThemeChangeEvent {
   const base = new UzEvent(type, null, {
     currentTarget: null,
     eventPhase: EventPhase.Target,
@@ -335,6 +346,13 @@ export function buildLifecycleEvent(
       width: payload?.width ?? 0,
       height: payload?.height ?? 0,
     }) as UzumakiResizeEvent;
+  }
+
+  if (type === 'themechange') {
+    return Object.assign(base, {
+      theme: payload?.theme ?? 'light',
+      preference: payload?.preference ?? 'system',
+    }) as UzThemeChangeEvent;
   }
 
   return base;

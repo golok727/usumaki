@@ -24,6 +24,11 @@ import {
   // @ts-expect-error it is what it is
 } from 'ext:core/ops';
 
+// @ts-expect-error registered via the `objects = [...]` list on the extension;
+// exposed as a JS-constructible cppgc class.
+import { CoreNode as CoreNodeImpl } from 'ext:core/ops';
+export const CoreNode = CoreNodeImpl as CoreNodeConstructor;
+
 export interface CoreWindow {
   readonly id: number;
 
@@ -57,6 +62,7 @@ export interface CoreWindow {
 
   readonly active: boolean | null;
   focus(): boolean;
+  setAnimationFramePending(pending: boolean): boolean;
 
   contentProtected: boolean | null;
   closable: boolean | null;
@@ -64,6 +70,12 @@ export interface CoreWindow {
   maximizable: boolean | null;
 
   remBase: number;
+
+  setVar(key: string, value: string | null): boolean;
+}
+
+export interface CoreNodeConstructor {
+  new (windowId: number, nodeId: NodeId): CoreNode;
 }
 
 export interface CoreNode {
@@ -82,9 +94,7 @@ export interface CoreNode {
   removeChild(child: CoreNode): void;
   remove(): void;
   removeChildren(): void;
-  setStrAttribute(name: string, value: string): void;
-  setNumberAttribute(name: string, value: number): void;
-  setBoolAttribute(name: string, value: boolean): void;
+  setAttribute(name: string, value: string): void;
   removeAttribute(name: string): void;
   getAttribute(name: string): unknown;
   scrollIntoView(block: number, inline: number): void;
@@ -107,8 +117,8 @@ interface Core {
   clearImageData(windowId: number, nodeId: NodeId): void;
   focusElement(windowId: number, nodeId: NodeId): void;
   getAncestorPath(windowId: number, nodeId: NodeId): NodeId[];
-  readClipboardText(): string | null;
-  writeClipboardText(text: string): boolean;
+  readClipboardText(): Promise<string | null>;
+  writeClipboardText(text: string): Promise<boolean>;
   onAppEvent(
     handler: (
       event: any,
@@ -171,7 +181,5 @@ const core: Core = {
   writeClipboardText: op_write_clipboard_text,
   onAppEvent,
 };
-// const core: Core = (globalThis as unknown as any)
-//   .__uzumaki_ops_dont_touch_this__;
 
 export default core;

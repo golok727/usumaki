@@ -55,7 +55,7 @@ export function StressPage() {
       flexDir="col"
       gap={0}
       h="full"
-      scroll
+      scrollY
       scrollbarRadius={5}
     >
       <view
@@ -88,19 +88,19 @@ export function StressPage() {
             flexDir="col"
             gap={4}
           >
-            <text fontSize={12} color={C.textMuted} fontWeight={600}>
+            <view fontSize={12} color={C.textMuted} fontWeight={600}>
               16hz TICKER
-            </text>
-            <text
+            </view>
+            <view
               fontSize={52}
               fontWeight={900}
               color={fastTick % 2 === 0 ? C.accentHi : C.primaryHi}
             >
               {fastTick}
-            </text>
-            <text fontSize={12} color={C.textMuted}>
+            </view>
+            <view fontSize={12} color={C.textMuted}>
               {(fastTick / 16).toFixed(2)}s · ~{fastTick * 16} renders
-            </text>
+            </view>
           </view>
           <view
             flex={2}
@@ -113,9 +113,9 @@ export function StressPage() {
             flexDir="col"
             gap={10}
           >
-            <text fontSize={12} color={C.textMuted} fontWeight={600}>
+            <view fontSize={12} color={C.textMuted} fontWeight={600}>
               PULSE BAR
-            </text>
+            </view>
             <view w="95%" h={10} bg={C.surface4} rounded={4}>
               <view
                 h={10}

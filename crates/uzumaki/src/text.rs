@@ -8,6 +8,8 @@ use vello::peniko::{Brush, Color, Fill};
 
 use crate::style::TextStyle;
 
+pub(crate) use parley::{InlineBox, TreeBuilder};
+
 impl From<crate::selection::Affinity> for ParleyAffinity {
     fn from(value: crate::selection::Affinity) -> Self {
         match value {
@@ -26,8 +28,26 @@ impl From<ParleyAffinity> for crate::selection::Affinity {
     }
 }
 
+/// Brush id used by `compute_text_leaf` for its standalone parley layout.
+/// Sentinel meaning "no inline `<text>` element owns this run" — paint
+/// code uses it to distinguish a text leaf's own glyphs from a real
+/// inline span that should receive per-line chip painting.
+pub const LEAF_BRUSH_ID: usize = usize::MAX;
+
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
-pub struct TextBrush;
+pub struct TextBrush {
+    pub id: usize,
+}
+
+impl TextBrush {
+    pub fn from_id(id: usize) -> Self {
+        Self { id }
+    }
+
+    pub fn is_leaf(self) -> bool {
+        self.id == LEAF_BRUSH_ID
+    }
+}
 
 pub struct TextRenderer {
     pub font_ctx: FontContext,
@@ -70,6 +90,33 @@ impl TextRenderer {
         // Only apply alignment when a frame is provided. Without one, callers
         // (cursor x-positions, hit testing, single-line input drawing) want
         // natural unaligned coordinates and apply alignment themselves.
+        if alignment != ParleyAlignment::Start && max_width.is_some() {
+            layout.align(max_width, alignment, AlignmentOptions::default());
+        }
+        layout
+    }
+
+    /// Build a multi-span inline parley layout. The caller drives the parley
+    /// `TreeBuilder` via `build`, choosing which fragments to push (styled
+    /// spans, inline boxes, padding spacers, etc.).
+    pub(crate) fn build_inline_layout<F>(
+        &mut self,
+        root_style: &TextStyle,
+        root_node_id: usize,
+        max_width: Option<f32>,
+        build: F,
+    ) -> Layout<TextBrush>
+    where
+        F: FnOnce(&mut TreeBuilder<'_, TextBrush>),
+    {
+        let parley_root = root_style.to_parley_text_style(root_node_id);
+        let mut builder = self
+            .layout_ctx
+            .tree_builder(&mut self.font_ctx, 1.0, true, &parley_root);
+        build(&mut builder);
+        let (mut layout, _) = builder.build();
+        layout.break_all_lines(max_width);
+        let alignment = root_style.text_align;
         if alignment != ParleyAlignment::Start && max_width.is_some() {
             layout.align(max_width, alignment, AlignmentOptions::default());
         }
@@ -365,14 +412,24 @@ pub fn layout_byte_to_grapheme(layout: &Layout<TextBrush>, byte: usize) -> usize
     count
 }
 
-/// Draw a parley layout that has already been built. Pure draw — no layout
-/// rebuild. Used by the painter against `Node::text_layout`.
+/// Draw a parley layout that has already been built. Pure draw with no layout
+/// rebuild. Used by the painter against an element's cached inline layout.
 pub fn draw_layout(
     scene: &mut Scene,
     layout: &Layout<TextBrush>,
     position: (f32, f32),
     color: Color,
     transform: Affine,
+) {
+    draw_layout_with_brush(scene, layout, position, transform, |_| color);
+}
+
+pub fn draw_layout_with_brush(
+    scene: &mut Scene,
+    layout: &Layout<TextBrush>,
+    position: (f32, f32),
+    transform: Affine,
+    mut color_for_brush: impl FnMut(TextBrush) -> Color,
 ) {
     let (px, py) = position;
     for line in layout.lines() {
@@ -391,7 +448,7 @@ pub fn draw_layout(
                     .font_size(run_font_size)
                     .transform(transform)
                     .glyph_transform(glyph_xform)
-                    .brush(&Brush::Solid(color))
+                    .brush(&Brush::Solid(color_for_brush(glyph_run.style().brush)))
                     .draw(
                         Fill::NonZero,
                         glyph_run.positioned_glyphs().map(|g| vello::Glyph {

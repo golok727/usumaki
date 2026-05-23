@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="etc/logo.svg" width="140" alt="Uzumaki logo" />
+  <img src="etc/logo.svg" width="140" alt="Uzumak" />
 
   <h1>Uzumaki</h1>
 
@@ -15,15 +15,15 @@
 
 </div>
 
-> [!WARNING]
-> Uzumaki is in alpha. The API is unstable and will change.
+> [!NOTE]
+> Uzumaki is in early alpha. Expect breaking changes between releases.
 
 ## Quick Example
 
 ```tsx
 import { useState } from 'react';
 import { Window } from 'uzumaki';
-import { render } from 'uzumaki-react';
+import { createRoot } from 'uzumaki-react';
 
 const window = new Window('main', {
   width: 800,
@@ -67,7 +67,7 @@ function App() {
   );
 }
 
-render(window, <App />);
+createRoot(window).render(<App />);
 ```
 
 ## Package Model
@@ -110,12 +110,13 @@ pnpm dev
 
 Uzumaki builds on great work from:
 
-- [Deno](https://github.com/denoland/deno)
-- [wgpu](https://github.com/gfx-rs/wgpu)
-- [Vello](https://github.com/linebender/vello)
-- [Parley](https://github.com/linebender/parley)
-- [Blitz](https://github.com/DioxusLabs/blitz)
-- [Zed](https://github.com/zed-industries/zed)
+- [Deno](https://github.com/denoland/deno) for the JS/TS runtime (`deno_core`, `deno_runtime`)
+- [wgpu](https://github.com/gfx-rs/wgpu) for the GPU backend
+- [Vello](https://github.com/linebender/vello) for rendering
+- [Parley](https://github.com/linebender/parley) for text layout
+- [Taffy](https://github.com/DioxusLabs/taffy) for layout
+- [Blitz](https://github.com/DioxusLabs/blitz), where i learned how to drive the Linebender stack tysmm <333 and lovingly stole some ideas
+- [Zed](https://github.com/zed-industries/zed), i borrowed a few utilities and they inspired me to start making ui frameworks a few years ago <3
 
 ## License
 

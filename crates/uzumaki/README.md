@@ -10,7 +10,7 @@ Apps import runtime APIs from the built-in `uzumaki` module:
 
 ```tsx
 import { Window } from 'uzumaki';
-import { render } from 'uzumaki-react';
+import { createRoot } from 'uzumaki-react';
 ```
 
 The `uzumaki` module is provided by the runtime at execution time. It is not a normal app dependency.

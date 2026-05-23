@@ -61,7 +61,7 @@ export function DashboardPage() {
       flexDir="col"
       gap={0}
       h="full"
-      scroll
+      scrollY
       scrollbarWidth={8}
       scrollbarRadius={5}
     >
@@ -80,19 +80,21 @@ export function DashboardPage() {
             System Dashboard
           </view>
           <view display="flex" flexDir="row" items="center" gap={8}>
-            <view px={8} py={2} bg={C.accentDim} rounded={4}>
-              <text
-                textWrap="nowrap"
-                fontSize={10}
-                fontWeight={700}
-                color={C.accentHi}
-              >
-                DEMO MODE
-              </text>
+            <view
+              px={8}
+              py={2}
+              bg={C.accentDim}
+              rounded={4}
+              textWrap="nowrap"
+              fontSize={10}
+              fontWeight={700}
+              color={C.accentHi}
+            >
+              DEMO MODE
             </view>
-            <text fontSize={12} color={C.textMuted}>
+            <view fontSize={12} color={C.textMuted}>
               Fake data for demonstration
-            </text>
+            </view>
           </view>
         </view>
         <view display="flex" flexDir="row" items="center" gap={10}>
@@ -171,9 +173,9 @@ export function DashboardPage() {
             flexDir="col"
             gap={16}
           >
-            <text fontSize={14} fontWeight={700} color={C.text}>
+            <view fontSize={14} fontWeight={700} color={C.text}>
               Resource Usage
-            </text>
+            </view>
             <ProgressBar
               label="CPU"
               value={cpu}
@@ -218,9 +220,9 @@ export function DashboardPage() {
             flexDir="col"
             gap={12}
           >
-            <text fontSize={14} fontWeight={700} color={C.text}>
+            <view fontSize={14} fontWeight={700} color={C.text}>
               CPU Bars (last 20 ticks)
-            </text>
+            </view>
             <view display="flex" flexDir="row" flex={1} gap={2} h={80} minW={0}>
               {Array.from({ length: 20 }, (_, i) => {
                 const age = 19 - i;
@@ -256,16 +258,16 @@ export function DashboardPage() {
                 items="center"
                 justify="between"
               >
-                <text fontSize={12} color={C.textMuted}>
+                <view fontSize={12} color={C.textMuted}>
                   Current
-                </text>
-                <text
+                </view>
+                <view
                   fontSize={13}
                   fontWeight={700}
                   color={cpu > 80 ? C.dangerHi : C.accentHi}
                 >
                   {cpu.toFixed(1)}%
-                </text>
+                </view>
               </view>
               <view
                 display="flex"
@@ -273,12 +275,12 @@ export function DashboardPage() {
                 items="center"
                 justify="between"
               >
-                <text fontSize={12} color={C.textMuted}>
+                <view fontSize={12} color={C.textMuted}>
                   Peak
-                </text>
-                <text fontSize={13} fontWeight={700} color={C.warning}>
+                </view>
+                <view fontSize={13} fontWeight={700} color={C.warning}>
                   97.3%
-                </text>
+                </view>
               </view>
               <view
                 display="flex"
@@ -286,12 +288,12 @@ export function DashboardPage() {
                 items="center"
                 justify="between"
               >
-                <text fontSize={12} color={C.textMuted}>
+                <view fontSize={12} color={C.textMuted}>
                   Avg
-                </text>
-                <text fontSize={13} fontWeight={700} color={C.textSub}>
+                </view>
+                <view fontSize={13} fontWeight={700} color={C.textSub}>
                   51.2%
-                </text>
+                </view>
               </view>
             </view>
           </view>

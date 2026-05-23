@@ -2,4 +2,3 @@ packages:
   - 'crates/uzumaki'
   - 'packages/*'
   - 'docs'
-  - 'zlocal/zlocal'

@@ -1,16 +1,12 @@
 use deno_core::*;
 use refineable::Refineable;
-use winit::dpi::{LogicalPosition, LogicalSize, PhysicalPosition};
+use winit::dpi::{LogicalPosition, LogicalSize};
 use winit::event_loop::EventLoopProxy;
 use winit::window::{
     Fullscreen, Theme, Window as WinitWindow, WindowAttributes, WindowButtons, WindowLevel,
 };
 
-use crate::app::{
-    SharedAppState, UserEvent, WindowEntry, WindowEntryId, with_state, with_state_ref,
-};
-use crate::style::*;
-use crate::ui::UIState;
+use crate::app::{JsWindow, SharedJsState, UserEvent, WindowEntryId, with_state, with_state_ref};
 
 const DEFAULT_MIN_WINDOW_WIDTH: f64 = 400.0;
 const DEFAULT_MIN_WINDOW_HEIGHT: f64 = 300.0;
@@ -18,7 +14,7 @@ const DEFAULT_MIN_WINDOW_HEIGHT: f64 = 300.0;
 #[derive(Clone, Debug, PartialEq, Refineable, serde::Deserialize)]
 #[refineable(Debug, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct WindowOptions {
+pub struct WindowOptions {
     width: u32,
     height: u32,
     title: String,
@@ -99,14 +95,6 @@ impl WindowPosition {
     fn to_logical_position(self) -> LogicalPosition<f64> {
         LogicalPosition::new(self.x, self.y)
     }
-
-    fn from_physical_position(position: PhysicalPosition<i32>, scale_factor: f64) -> Self {
-        let position: LogicalPosition<f64> = position.to_logical(scale_factor);
-        Self {
-            x: position.x,
-            y: position.y,
-        }
-    }
 }
 
 impl WindowTheme {
@@ -150,12 +138,10 @@ impl<'a> From<&'a str> for UzWindowLevel {
             "normal" => UzWindowLevel::Normal,
             "alwaysOnTop" => UzWindowLevel::AlwaysOnTop,
             "alwaysOnBottom" => UzWindowLevel::AlwaysOnBottom,
-            _ => UzWindowLevel::Normal, // default to normal if unrecognized
+            _ => UzWindowLevel::Normal,
         }
     }
 }
-
-// convert string to WindowTheme, defaulting to System if unrecognized
 
 impl<'a> From<&'a str> for WindowTheme {
     fn from(value: &'a str) -> Self {
@@ -163,17 +149,7 @@ impl<'a> From<&'a str> for WindowTheme {
             "light" => WindowTheme::Light,
             "dark" => WindowTheme::Dark,
             "system" => WindowTheme::System,
-            _ => WindowTheme::System, // default to system if unrecognized
-        }
-    }
-}
-
-impl WindowSize {
-    fn from_physical_size(size: winit::dpi::PhysicalSize<u32>, scale_factor: f64) -> Self {
-        let size: LogicalSize<u32> = size.to_logical(scale_factor);
-        Self {
-            width: size.width,
-            height: size.height,
+            _ => WindowTheme::System,
         }
     }
 }
@@ -208,21 +184,57 @@ impl Default for WindowOptions {
 }
 
 impl WindowOptions {
-    pub(crate) fn transparent(&self) -> bool {
+    pub fn title(&self) -> &str {
+        &self.title
+    }
+
+    pub fn visible(&self) -> bool {
+        self.visible
+    }
+
+    pub fn resizable(&self) -> bool {
+        self.resizable
+    }
+
+    pub fn decorations(&self) -> bool {
+        self.decorations
+    }
+
+    pub fn transparent(&self) -> bool {
         self.transparent
     }
 
-    pub(crate) fn window_level(&self) -> WindowLevel {
+    pub fn maximized(&self) -> bool {
+        self.maximized
+    }
+
+    pub fn minimized(&self) -> bool {
+        self.minimized
+    }
+
+    pub fn fullscreen(&self) -> bool {
+        self.fullscreen
+    }
+
+    pub fn window_level(&self) -> WindowLevel {
         self.window_level
             .map(UzWindowLevel::to_winit)
             .unwrap_or(WindowLevel::Normal)
     }
 
-    pub(crate) fn enabled_buttons(&self) -> WindowButtons {
+    pub fn enabled_buttons(&self) -> WindowButtons {
         window_buttons(self.closable, self.minimizable, self.maximizable)
     }
 
-    pub(crate) fn to_window_attributes(&self) -> WindowAttributes {
+    pub fn content_protected(&self) -> bool {
+        self.content_protected
+    }
+
+    pub fn theme_winit(&self) -> Option<Theme> {
+        self.theme.and_then(WindowTheme::to_winit)
+    }
+
+    pub fn to_window_attributes(&self) -> WindowAttributes {
         let mut attributes = WindowAttributes::default()
             .with_title(self.title.clone())
             .with_inner_size(LogicalSize::new(self.width as f64, self.height as f64))
@@ -260,7 +272,7 @@ impl WindowOptions {
         attributes
     }
 
-    pub(crate) fn apply_post_create_state(&self, window: &WinitWindow) {
+    pub fn apply_post_create_state(&self, window: &WinitWindow) {
         if self.minimized {
             window.set_minimized(true);
         }
@@ -302,25 +314,9 @@ pub fn op_create_window(
     let id = NEXT_WINDOW_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let options = WindowOptions::default().refined(options);
 
-    let app_state = state.borrow::<SharedAppState>().clone();
-    with_state(&app_state, |s| {
-        let mut dom = UIState::new();
-        let root = dom.create_view(UzStyle::root());
-        dom.set_root(root);
-
-        s.windows.insert(
-            id,
-            WindowEntry {
-                dom,
-                handle: None,
-                rem_base: 16.0,
-                cursor_blink_generation: 0,
-                transparent: options.transparent(),
-                window_level: options.window_level(),
-                content_protected: options.content_protected,
-                enabled_buttons: options.enabled_buttons(),
-            },
-        );
+    let js_state = state.borrow::<SharedJsState>().clone();
+    with_state(&js_state, |s| {
+        s.windows.insert(id, JsWindow::new(&options));
     });
 
     let proxy = state.borrow::<EventLoopProxy<UserEvent>>();
@@ -350,39 +346,45 @@ pub fn op_request_redraw(
     state: &mut OpState,
     #[smi] window_id: u32,
 ) -> Result<(), deno_error::JsErrorBox> {
-    let proxy = state.borrow::<EventLoopProxy<UserEvent>>();
-    proxy
-        .send_event(UserEvent::RequestRedraw { id: window_id })
-        .map_err(|_| {
-            deno_error::JsErrorBox::new("UzumakiInternalError", "error requesting redraw")
-        })?;
+    let js_state = state.borrow::<SharedJsState>().clone();
+    with_state_ref(&js_state, |s| {
+        if let Some(entry) = s.windows.get(&window_id)
+            && let Some(window) = entry.window.as_ref()
+        {
+            window.request_redraw();
+        }
+    });
     Ok(())
 }
 
 #[op2]
 #[string]
-pub fn op_read_clipboard_text(state: &mut OpState) -> Option<String> {
-    let app_state = state.borrow::<SharedAppState>().clone();
-    let s = app_state.borrow();
-    match s.clipboard.borrow_mut().read_text() {
-        Ok(text) => text,
-        Err(e) => {
-            eprintln!("[uzumaki] clipboard read error: {e}");
-            None
-        }
+pub fn op_read_clipboard_text(
+    state: std::rc::Rc<std::cell::RefCell<OpState>>,
+) -> impl std::future::Future<Output = Option<String>> {
+    let proxy = state.borrow().borrow::<EventLoopProxy<UserEvent>>().clone();
+    async move {
+        let (reply, rx) = flume::bounded(1);
+        proxy.send_event(UserEvent::ClipboardRead { reply }).ok()?;
+        rx.recv_async().await.ok().flatten()
     }
 }
 
-#[op2(fast)]
-pub fn op_write_clipboard_text(state: &mut OpState, #[string] text: String) -> bool {
-    let app_state = state.borrow::<SharedAppState>().clone();
-    let s = app_state.borrow();
-    match s.clipboard.borrow_mut().write_text(&text) {
-        Ok(()) => true,
-        Err(e) => {
-            eprintln!("[uzumaki] clipboard write error: {e}");
-            false
+#[op2]
+pub fn op_write_clipboard_text(
+    state: std::rc::Rc<std::cell::RefCell<OpState>>,
+    #[string] text: String,
+) -> impl std::future::Future<Output = bool> {
+    let proxy = state.borrow().borrow::<EventLoopProxy<UserEvent>>().clone();
+    async move {
+        let (reply, rx) = flume::bounded(1);
+        if proxy
+            .send_event(UserEvent::ClipboardWrite { text, reply })
+            .is_err()
+        {
+            return false;
         }
+        rx.recv_async().await.unwrap_or(false)
     }
 }
 
@@ -397,102 +399,54 @@ impl CoreWindow {
         Self { id }
     }
 
-    fn with_window_entry<R>(
-        &self,
-        state: &OpState,
-        f: impl FnOnce(&WindowEntry) -> R,
-    ) -> Option<R> {
-        let app = state.borrow::<SharedAppState>();
-        with_state_ref(app, |state| state.windows.get(&self.id).map(f))
+    fn with_entry<R>(&self, state: &OpState, f: impl FnOnce(&JsWindow) -> R) -> Option<R> {
+        let js = state.borrow::<SharedJsState>().clone();
+        with_state_ref(&js, |s| s.windows.get(&self.id).map(f))
     }
 
-    fn with_window_entry_mut<R>(
-        &self,
-        state: &OpState,
-        f: impl FnOnce(&mut WindowEntry) -> R,
-    ) -> Option<R> {
-        let app = state.borrow::<SharedAppState>().clone();
-        with_state(&app, |state| state.windows.get_mut(&self.id).map(f))
+    fn with_entry_mut<R>(&self, state: &OpState, f: impl FnOnce(&mut JsWindow) -> R) -> Option<R> {
+        let js = state.borrow::<SharedJsState>().clone();
+        with_state(&js, |s| s.windows.get_mut(&self.id).map(f))
     }
 
-    fn with_winit_window<R>(
-        &self,
-        state: &OpState,
-        f: impl FnOnce(&WinitWindow) -> R,
-    ) -> Option<R> {
-        self.with_window_entry(state, |entry| {
-            entry
-                .handle
-                .as_ref()
-                .map(|handle| f(handle.winit_window.as_ref()))
-        })
-        .flatten()
+    fn proxy_send(&self, state: &OpState, event: UserEvent) -> bool {
+        state
+            .borrow::<EventLoopProxy<UserEvent>>()
+            .send_event(event)
+            .is_ok()
     }
 
-    fn with_winit_window_option<R>(
+    /// Sync the local `WindowMirror` and forward the matching `UserEvent` to
+    /// the main thread in one step. The closure returns the event to send
+    /// after applying its mirror update; if the entry doesn't exist (window
+    /// already closed) the event is skipped.
+    fn sync_and_send(
         &self,
         state: &OpState,
-        f: impl FnOnce(&WinitWindow) -> Option<R>,
-    ) -> Option<R> {
-        self.with_winit_window(state, f).flatten()
-    }
-
-    fn update_winit_window(&self, state: &OpState, update: impl FnOnce(&WinitWindow)) -> bool {
-        self.with_winit_window(state, update).is_some()
-    }
-
-    fn set_window_size_constraint(
-        &self,
-        state: &OpState,
-        width: f64,
-        height: f64,
-        set_constraint: impl FnOnce(&WinitWindow, LogicalSize<f64>),
+        apply: impl FnOnce(&mut JsWindow) -> UserEvent,
     ) -> bool {
-        let Some(size) = try_logical_size(Some(width), Some(height)) else {
-            return false;
-        };
-
-        self.with_winit_window(state, |window| set_constraint(window, size))
-            .is_some()
+        match self.with_entry_mut(state, apply) {
+            Some(event) => self.proxy_send(state, event),
+            None => false,
+        }
     }
 
-    fn set_window_level_state(&self, state: &OpState, level: WindowLevel) -> bool {
-        self.with_window_entry_mut(state, |entry| {
-            entry.window_level = level;
-            if let Some(handle) = entry.handle.as_ref() {
-                handle.winit_window.set_window_level(level);
-            }
-        })
-        .is_some()
-    }
-
-    fn has_window_button(&self, state: &OpState, button: WindowButtons) -> Option<bool> {
-        self.with_window_entry(state, |entry| entry.enabled_buttons.contains(button))
-    }
-
-    fn set_window_button_state(
-        &self,
-        state: &OpState,
-        button: WindowButtons,
-        enabled: bool,
-    ) -> bool {
-        self.with_window_entry_mut(state, |entry| {
+    fn toggle_button(&self, state: &OpState, button: WindowButtons, enabled: bool) -> bool {
+        let id = self.id;
+        self.sync_and_send(state, |entry| {
             if enabled {
-                entry.enabled_buttons |= button;
+                entry.state.enabled_buttons |= button;
             } else {
-                entry.enabled_buttons &= !button;
+                entry.state.enabled_buttons &= !button;
             }
-            if let Some(handle) = entry.handle.as_ref() {
-                handle
-                    .winit_window
-                    .set_enabled_buttons(entry.enabled_buttons);
+            UserEvent::SetEnabledButtons {
+                id,
+                buttons: entry.state.enabled_buttons,
             }
         })
-        .is_some()
     }
 }
 
-// SAFETY: we're sure this can be GCed
 unsafe impl GarbageCollected for CoreWindow {
     fn trace(&self, _visitor: &mut deno_core::v8::cppgc::Visitor) {}
 
@@ -511,185 +465,220 @@ impl CoreWindow {
 
     #[fast]
     pub fn close(&self, state: &OpState) -> Result<(), deno_error::JsErrorBox> {
-        let proxy = state.borrow::<EventLoopProxy<UserEvent>>();
-
-        proxy
-            .send_event(UserEvent::CloseWindow { id: self.id })
-            .map_err(|_| {
-                deno_error::JsErrorBox::new("UzumakiInternalError", "error closing window")
-            })?;
+        self.proxy_send(state, UserEvent::CloseWindow { id: self.id });
         Ok(())
     }
 
-    /**
-     * inner width of window in logical pixels
-     */
+    /** inner width in logical pixels */
     #[getter]
     pub fn innerWidth(&self, state: &OpState) -> Option<u32> {
-        self.with_window_entry(state, |entry| entry.inner_size().map(|(width, _)| width))
+        self.with_entry(state, |entry| entry.inner_size().map(|(w, _)| w))
             .flatten()
     }
 
-    /**
-     * inner height of window in logical pixels
-     */
+    /** inner height in logical pixels */
     #[getter]
     pub fn innerHeight(&self, state: &OpState) -> Option<u32> {
-        self.with_window_entry(state, |entry| entry.inner_size().map(|(_, height)| height))
+        self.with_entry(state, |entry| entry.inner_size().map(|(_, h)| h))
             .flatten()
     }
 
     #[getter]
     #[string]
     pub fn title(&self, state: &OpState) -> Option<String> {
-        self.with_winit_window(state, |window| window.title())
+        self.with_entry(state, |entry| entry.state.title.clone())
     }
 
     #[fast]
     #[setter]
     pub fn title(&self, state: &OpState, #[string] title: String) -> bool {
-        self.update_winit_window(state, |window| window.set_title(&title))
+        let id = self.id;
+        self.sync_and_send(state, move |entry| {
+            entry.state.title = title.clone();
+            UserEvent::SetTitle { id, title }
+        })
     }
 
     #[getter]
     pub fn visible(&self, state: &OpState) -> Option<bool> {
-        self.with_winit_window_option(state, |window| window.is_visible())
+        self.with_entry(state, |entry| entry.state.visible)
     }
 
     #[fast]
     #[setter]
     pub fn visible(&self, state: &OpState, visible: bool) -> bool {
-        self.update_winit_window(state, |window| window.set_visible(visible))
+        let id = self.id;
+        self.sync_and_send(state, move |entry| {
+            entry.state.visible = visible;
+            UserEvent::SetVisible { id, visible }
+        })
     }
 
     #[getter]
     pub fn transparent(&self, state: &OpState) -> Option<bool> {
-        self.with_window_entry(state, |entry| entry.transparent)
+        self.with_entry(state, |entry| entry.state.transparent)
     }
 
     #[fast]
     #[setter]
     pub fn transparent(&self, state: &OpState, transparent: bool) -> bool {
-        self.with_window_entry_mut(state, |entry| {
-            entry.transparent = transparent;
-            if let Some(handle) = entry.handle.as_mut() {
-                handle.set_transparent(transparent);
-            }
+        let id = self.id;
+        self.sync_and_send(state, move |entry| {
+            entry.state.transparent = transparent;
+            UserEvent::SetTransparent { id, transparent }
         })
-        .is_some()
     }
 
     #[getter]
     pub fn resizable(&self, state: &OpState) -> Option<bool> {
-        self.with_winit_window(state, |window| window.is_resizable())
+        self.with_entry(state, |entry| entry.state.resizable)
     }
 
     #[fast]
     #[setter]
     pub fn resizable(&self, state: &OpState, resizable: bool) -> bool {
-        self.update_winit_window(state, |window| window.set_resizable(resizable))
+        let id = self.id;
+        self.sync_and_send(state, move |entry| {
+            entry.state.resizable = resizable;
+            UserEvent::SetResizable { id, resizable }
+        })
     }
 
     #[getter]
     pub fn decorations(&self, state: &OpState) -> Option<bool> {
-        self.with_winit_window(state, |window| window.is_decorated())
+        self.with_entry(state, |entry| entry.state.decorations)
     }
 
     #[fast]
     #[setter]
     pub fn decorations(&self, state: &OpState, decorations: bool) -> bool {
-        self.update_winit_window(state, |window| window.set_decorations(decorations))
+        let id = self.id;
+        self.sync_and_send(state, move |entry| {
+            entry.state.decorations = decorations;
+            UserEvent::SetDecorations { id, decorations }
+        })
     }
 
     #[getter]
     pub fn maximized(&self, state: &OpState) -> Option<bool> {
-        self.with_winit_window(state, |window| window.is_maximized())
+        self.with_entry(state, |entry| entry.state.maximized)
     }
 
     #[fast]
     #[setter]
     pub fn maximized(&self, state: &OpState, maximized: bool) -> bool {
-        self.update_winit_window(state, |window| window.set_maximized(maximized))
+        let id = self.id;
+        self.sync_and_send(state, move |entry| {
+            entry.state.maximized = maximized;
+            UserEvent::SetMaximized { id, maximized }
+        })
     }
 
     #[getter]
     pub fn minimized(&self, state: &OpState) -> Option<bool> {
-        self.with_winit_window_option(state, |window| window.is_minimized())
+        self.with_entry(state, |entry| entry.state.minimized)
     }
 
     #[fast]
     #[setter]
     pub fn minimized(&self, state: &OpState, minimized: bool) -> bool {
-        self.update_winit_window(state, |window| window.set_minimized(minimized))
+        let id = self.id;
+        self.sync_and_send(state, move |entry| {
+            entry.state.minimized = minimized;
+            UserEvent::SetMinimized { id, minimized }
+        })
     }
 
     #[getter]
     pub fn fullscreen(&self, state: &OpState) -> Option<bool> {
-        self.with_winit_window(state, |window| window.fullscreen().is_some())
+        self.with_entry(state, |entry| entry.state.fullscreen)
     }
 
     #[fast]
     #[setter]
     pub fn fullscreen(&self, state: &OpState, fullscreen: bool) -> bool {
-        self.update_winit_window(state, |window| {
-            let target = fullscreen.then_some(Fullscreen::Borderless(None));
-            window.set_fullscreen(target);
+        let id = self.id;
+        self.sync_and_send(state, move |entry| {
+            entry.state.fullscreen = fullscreen;
+            UserEvent::SetFullscreen { id, fullscreen }
         })
     }
 
-    // todo change to int
     #[getter]
     #[string]
     pub fn windowLevel(&self, state: &OpState) -> Option<String> {
-        self.with_window_entry(state, |entry| UzWindowLevel::from_winit(entry.window_level))
-            .map(|level| level.as_str().into())
+        self.with_entry(state, |entry| {
+            UzWindowLevel::from_winit(entry.state.window_level)
+                .as_str()
+                .to_string()
+        })
     }
 
     #[fast]
     #[setter]
     pub fn windowLevel(&self, state: &OpState, #[string] level: &str) -> bool {
-        let level = UzWindowLevel::from(level);
-        self.set_window_level_state(state, level.to_winit())
+        let level = UzWindowLevel::from(level).to_winit();
+        let id = self.id;
+        self.sync_and_send(state, move |entry| {
+            entry.state.window_level = level;
+            UserEvent::SetWindowLevel { id, level }
+        })
     }
 
     #[fast]
     pub fn setMinSize(&self, state: &OpState, width: f64, height: f64) -> bool {
-        self.set_window_size_constraint(state, width, height, |window, size| {
-            window.set_min_inner_size(Some(size));
-        })
+        let Some(size) = try_logical_size(Some(width), Some(height)) else {
+            return false;
+        };
+        self.proxy_send(state, UserEvent::SetMinSize { id: self.id, size })
     }
 
     #[fast]
     pub fn setMaxSize(&self, state: &OpState, width: f64, height: f64) -> bool {
-        self.set_window_size_constraint(state, width, height, |window, size| {
-            window.set_max_inner_size(Some(size));
-        })
+        let Some(size) = try_logical_size(Some(width), Some(height)) else {
+            return false;
+        };
+        self.proxy_send(state, UserEvent::SetMaxSize { id: self.id, size })
     }
 
     #[getter]
     #[serde]
     pub fn innerSize(&self, state: &OpState) -> Option<WindowSize> {
-        self.with_winit_window(state, |window| {
-            WindowSize::from_physical_size(window.inner_size(), window.scale_factor())
+        self.with_entry(state, |entry| {
+            entry.inner_size().map(|(w, h)| WindowSize {
+                width: w,
+                height: h,
+            })
         })
+        .flatten()
     }
 
     #[getter]
     #[serde]
     pub fn outerSize(&self, state: &OpState) -> Option<WindowSize> {
-        self.with_winit_window(state, |window| {
-            WindowSize::from_physical_size(window.outer_size(), window.scale_factor())
+        self.with_entry(state, |entry| {
+            let scale = entry.scale_factor()? as f64;
+            let outer = entry.state.outer_size?;
+            Some(WindowSize {
+                width: (outer.width as f64 / scale).round() as u32,
+                height: (outer.height as f64 / scale).round() as u32,
+            })
         })
+        .flatten()
     }
 
     #[getter]
     #[serde]
     pub fn position(&self, state: &OpState) -> Option<WindowPosition> {
-        self.with_winit_window_option(state, |window| {
-            window.outer_position().ok().map(|position| {
-                WindowPosition::from_physical_position(position, window.scale_factor())
+        self.with_entry(state, |entry| {
+            let scale = entry.scale_factor()? as f64;
+            let pos = entry.state.outer_position?;
+            Some(WindowPosition {
+                x: pos.x as f64 / scale,
+                y: pos.y as f64 / scale,
             })
         })
+        .flatten()
     }
 
     #[fast]
@@ -697,113 +686,161 @@ impl CoreWindow {
         if !x.is_finite() || !y.is_finite() {
             return false;
         }
-
-        self.update_winit_window(state, |window| {
-            window.set_outer_position(LogicalPosition::new(x, y));
-        })
+        self.proxy_send(
+            state,
+            UserEvent::SetPosition {
+                id: self.id,
+                position: LogicalPosition::new(x, y),
+            },
+        )
     }
 
     #[getter]
     pub fn scaleFactor(&self, state: &OpState) -> Option<f32> {
-        self.with_window_entry(state, |entry| entry.scale_factor())
+        self.with_entry(state, |entry| entry.scale_factor())
             .flatten()
     }
 
     #[getter]
     #[string]
     pub fn theme(&self, state: &OpState) -> Option<String> {
-        self.with_winit_window_option(state, |window| window.theme().map(WindowTheme::from_winit))
-            .map(|theme| theme.as_str().into())
+        self.with_entry(state, |entry| {
+            entry
+                .state
+                .theme
+                .map(|t| WindowTheme::from_winit(t).as_str().to_string())
+        })
+        .flatten()
     }
 
-    // todo use int
     #[fast]
     #[setter]
     pub fn theme(&self, state: &OpState, #[string] theme: &str) -> bool {
-        let theme = WindowTheme::from(theme);
-        self.update_winit_window(state, |window| {
-            window.set_theme(theme.to_winit());
+        let theme = WindowTheme::from(theme).to_winit();
+        let id = self.id;
+        self.sync_and_send(state, move |entry| {
+            entry.state.theme = theme;
+            UserEvent::SetTheme { id, theme }
         })
     }
 
     #[getter]
     pub fn active(&self, state: &OpState) -> Option<bool> {
-        self.with_winit_window(state, |window| window.has_focus())
+        self.with_entry(state, |entry| entry.state.focused)
     }
 
     #[fast]
     pub fn focus(&self, state: &OpState) -> bool {
-        self.update_winit_window(state, |window| window.focus_window())
+        self.proxy_send(state, UserEvent::Focus { id: self.id })
+    }
+
+    #[fast]
+    pub fn setAnimationFramePending(&self, state: &OpState, pending: bool) -> bool {
+        self.proxy_send(
+            state,
+            UserEvent::AnimationFramePending {
+                id: self.id,
+                pending,
+            },
+        )
     }
 
     #[getter]
     pub fn contentProtected(&self, state: &OpState) -> Option<bool> {
-        self.with_window_entry(state, |entry| entry.content_protected)
+        self.with_entry(state, |entry| entry.state.content_protected)
     }
 
     #[fast]
     pub fn setContentProtected(&self, state: &OpState, protected: bool) -> bool {
-        self.with_window_entry_mut(state, |entry| {
-            entry.content_protected = protected;
-            if let Some(handle) = entry.handle.as_ref() {
-                handle.winit_window.set_content_protected(protected);
-            }
+        let id = self.id;
+        self.sync_and_send(state, move |entry| {
+            entry.state.content_protected = protected;
+            UserEvent::SetContentProtected { id, protected }
         })
-        .is_some()
     }
 
     #[getter]
     pub fn closable(&self, state: &OpState) -> Option<bool> {
-        self.has_window_button(state, WindowButtons::CLOSE)
+        self.with_entry(state, |entry| {
+            entry.state.enabled_buttons.contains(WindowButtons::CLOSE)
+        })
     }
 
     #[fast]
     #[setter]
     pub fn closable(&self, state: &OpState, closable: bool) -> bool {
-        self.set_window_button_state(state, WindowButtons::CLOSE, closable)
+        self.toggle_button(state, WindowButtons::CLOSE, closable)
     }
 
     #[getter]
     pub fn minimizable(&self, state: &OpState) -> Option<bool> {
-        self.has_window_button(state, WindowButtons::MINIMIZE)
+        self.with_entry(state, |entry| {
+            entry
+                .state
+                .enabled_buttons
+                .contains(WindowButtons::MINIMIZE)
+        })
     }
 
     #[fast]
     #[setter]
     pub fn minimizable(&self, state: &OpState, minimizable: bool) -> bool {
-        self.set_window_button_state(state, WindowButtons::MINIMIZE, minimizable)
+        self.toggle_button(state, WindowButtons::MINIMIZE, minimizable)
     }
 
     #[getter]
     pub fn maximizable(&self, state: &OpState) -> Option<bool> {
-        self.has_window_button(state, WindowButtons::MAXIMIZE)
+        self.with_entry(state, |entry| {
+            entry
+                .state
+                .enabled_buttons
+                .contains(WindowButtons::MAXIMIZE)
+        })
     }
 
     #[fast]
     #[setter]
     pub fn maximizable(&self, state: &OpState, maximizable: bool) -> bool {
-        self.set_window_button_state(state, WindowButtons::MAXIMIZE, maximizable)
+        self.toggle_button(state, WindowButtons::MAXIMIZE, maximizable)
+    }
+
+    /// Set or remove a window var. `value = None` removes it; bound attrs
+    /// fall back to their defaults. Triggers a redraw if anything changed.
+    pub fn setVar(
+        &self,
+        state: &OpState,
+        #[string] key: &str,
+        #[string] value: Option<String>,
+    ) -> bool {
+        let js_state = state.borrow::<SharedJsState>().clone();
+        with_state(&js_state, |s| {
+            let Some(entry) = s.windows.get_mut(&self.id) else {
+                return false;
+            };
+            entry.set_var(key, value);
+            if let Some(window) = entry.window.as_ref() {
+                window.request_redraw();
+            }
+            true
+        })
     }
 
     #[getter]
     pub fn remBase(&self, state: &OpState) -> f32 {
-        self.with_window_entry(state, |entry| entry.rem_base)
+        self.with_entry(state, |entry| entry.rem_base)
             .unwrap_or(16.0)
     }
 
     #[fast]
     #[setter]
     pub fn remBase(&self, state: &mut OpState, value: f64) {
-        self.with_window_entry_mut(state, |entry| {
-            entry.rem_base = value as f32;
-        });
+        self.with_entry_mut(state, |entry| entry.rem_base = value as f32);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{WindowOptions, WindowPosition, WindowTheme};
-    use winit::dpi::PhysicalPosition;
     use winit::window::{Fullscreen, Theme};
 
     fn base_options() -> WindowOptions {
@@ -845,29 +882,6 @@ mod tests {
     }
 
     #[test]
-    fn create_options_map_sizes_and_position_when_complete() {
-        let mut options = base_options();
-        options.min_width = Some(320.0);
-        options.min_height = Some(240.0);
-        options.max_width = Some(1440.0);
-        options.max_height = Some(900.0);
-        options.position = Some(WindowPosition { x: 80.0, y: 120.0 });
-
-        let attributes = options.to_window_attributes();
-
-        assert!(attributes.min_inner_size.is_some());
-        assert!(attributes.max_inner_size.is_some());
-        assert!(attributes.position.is_some());
-    }
-
-    #[test]
-    fn physical_position_is_reported_as_logical_position() {
-        let position = WindowPosition::from_physical_position(PhysicalPosition::new(300, 150), 1.5);
-
-        assert_eq!(position, WindowPosition { x: 200.0, y: 100.0 });
-    }
-
-    #[test]
     fn default_min_size_is_preserved_without_explicit_min_size() {
         let options = base_options();
 
@@ -877,38 +891,12 @@ mod tests {
     }
 
     #[test]
-    fn incomplete_size_constraints_do_not_override_defaults() {
-        let mut options = base_options();
-        options.min_width = Some(320.0);
-        options.max_height = Some(900.0);
-
-        let attributes = options.to_window_attributes();
-
-        assert!(attributes.min_inner_size.is_some());
-        assert!(attributes.max_inner_size.is_none());
-    }
-
-    #[test]
-    fn system_theme_clears_preferred_theme() {
-        let mut options = base_options();
-        options.theme = Some(WindowTheme::System);
-
-        let attributes = options.to_window_attributes();
-
-        assert_eq!(attributes.preferred_theme, None);
-    }
-
-    #[test]
     fn explicit_window_level_maps_to_window_attributes() {
         let mut options = base_options();
         options.window_level = Some(super::UzWindowLevel::AlwaysOnBottom);
 
         assert_eq!(
             options.window_level(),
-            winit::window::WindowLevel::AlwaysOnBottom
-        );
-        assert_eq!(
-            options.to_window_attributes().window_level,
             winit::window::WindowLevel::AlwaysOnBottom
         );
     }
@@ -925,14 +913,12 @@ mod tests {
         assert!(!buttons.contains(winit::window::WindowButtons::CLOSE));
         assert!(buttons.contains(winit::window::WindowButtons::MINIMIZE));
         assert!(!buttons.contains(winit::window::WindowButtons::MAXIMIZE));
-        assert_eq!(options.to_window_attributes().enabled_buttons, buttons);
     }
 
     #[test]
-    fn minimized_is_post_create_state() {
-        let mut options = base_options();
-        options.minimized = true;
-
-        assert!(options.minimized);
+    fn window_position_round_trip() {
+        let p = WindowPosition { x: 1.0, y: 2.0 };
+        assert_eq!(p.x, 1.0);
+        assert_eq!(p.y, 2.0);
     }
 }

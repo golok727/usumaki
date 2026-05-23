@@ -32,8 +32,8 @@ impl GpuContext {
         });
 
         let adapter = wgpu::util::initialize_adapter_from_env_or_default(&instance, None).await?;
-        let info = adapter.get_info();
-        println!("{:?} - {:?}", info.name, info.backend);
+        // let info = adapter.get_info();
+        // println!("{:?} - {:?}", info.name, info.backend);
         let features = adapter.features();
         let limits = wgpu::Limits::default();
         let maybe_features = wgpu::Features::CLEAR_TEXTURE | wgpu::Features::PIPELINE_CACHE;

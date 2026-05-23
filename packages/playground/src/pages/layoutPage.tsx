@@ -13,11 +13,9 @@ const ALIGN_VALUES: TextAlignValue[] = [
   'justify',
 ];
 
-const SAMPLE_TEXT =
-  'The quick brown fox jumps over the lazy dog. Pack my box with five dozen liquor jugs.';
-
 function TextAlignDemo() {
   const [align, setAlign] = useState<TextAlignValue>('start');
+  const [parentDisplay, setParentDisplay] = useState<'block' | 'flex'>('block');
   const [singleLine, setSingleLine] = useState('');
   const [multiLine, setMultiLine] = useState('');
 
@@ -58,16 +56,175 @@ function TextAlignDemo() {
         ))}
       </view>
 
+      <view display="flex" flexDir="row" gap={6}>
+        {(['block', 'flex'] as const).map((v) => (
+          <button
+            key={v}
+            onClick={() => setParentDisplay(v)}
+            px={12}
+            py={6}
+            bg={parentDisplay === v ? C.accentDim : C.surface3}
+            hover:bg={parentDisplay === v ? C.accent : C.surface4}
+            active:bg={C.accentDim}
+            rounded={6}
+            border={1}
+            borderColor={parentDisplay === v ? C.accent : C.border}
+            cursor="pointer"
+          >
+            <text
+              fontSize={12}
+              fontWeight={parentDisplay === v ? 700 : 400}
+              color={parentDisplay === v ? C.accentHi : C.textMuted}
+            >
+              {v}
+            </text>
+          </button>
+        ))}
+      </view>
+
       <view
+        display={parentDisplay}
+        flexDir="col"
+        items="start"
         p={16}
         bg={C.surface2}
         rounded={8}
         border={1}
         borderColor={C.border}
+        selectable
+        fontSize={14}
+        color={C.text}
+        textAlign={align}
       >
-        <text selectable fontSize={14} color={C.text} textAlign={align}>
-          {SAMPLE_TEXT}
-        </text>
+        The quick brown{' '}
+        <text
+          bg={C.accent}
+          border={1}
+          borderColor={C.accentHi}
+          textAlign="center"
+          p={6}
+          rounded={5}
+          fontWeight={700}
+          fontSize={16}
+        >
+          fox
+        </text>{' '}
+        jumps over the lazy dog. Pack my box with five dozen liquor jugs.
+      </view>
+
+      <view display="flex" flexDir="col" gap={8}>
+        <view
+          display={parentDisplay}
+          flexDir="col"
+          p={14}
+          bg={C.surface2}
+          gap={4}
+          rounded={8}
+          border={1}
+          selectable
+          borderColor={C.border}
+          fontSize={14}
+          color={C.text}
+          textAlign={align}
+        >
+          Inline chip before{' '}
+          <text
+            bg={C.accentDark}
+            border={1}
+            borderColor={C.accent}
+            color={C.accentHi}
+            p={4}
+            px={8}
+            rounded={4}
+            fontWeight={700}
+          >
+            middle
+          </text>{' '}
+          and after text should keep clear spacing.
+        </view>
+
+        <view
+          display={parentDisplay}
+          flexDir="col"
+          items="start"
+          p={14}
+          bg={C.surface2}
+          rounded={8}
+          border={1}
+          selectable
+          borderColor={C.border}
+          fontSize={14}
+          color={C.text}
+          textAlign={align}
+          w={360}
+        >
+          Wrapping inline chips should stay attached to their text while this{' '}
+          <text
+            bg={C.successDark}
+            border={1}
+            borderColor={C.success}
+            color={C.successHi}
+            p={5}
+            px={9}
+            rounded={5}
+            fontWeight={700}
+          >
+            highlighted phrase
+          </text>{' '}
+          moves across lines.
+        </view>
+
+        <view
+          display={parentDisplay}
+          flexDir="col"
+          p={14}
+          bg={C.surface2}
+          rounded={8}
+          selectable
+          border={1}
+          borderColor={C.border}
+          fontSize={14}
+          color={C.text}
+          textAlign={align}
+        >
+          Multiple chips:{' '}
+          <text
+            bg={C.warningDark}
+            border={1}
+            borderColor={C.warning}
+            color={C.warningHi}
+            p={3}
+            px={7}
+            rounded={4}
+            fontWeight={700}
+          >
+            alpha
+          </text>{' '}
+          <text
+            bg={C.surface4}
+            border={1}
+            borderColor={C.borderHi}
+            color={C.text}
+            p={5}
+            px={9}
+            rounded={5}
+            fontWeight={700}
+          >
+            beta
+          </text>{' '}
+          <text
+            bg={C.accent}
+            border={1}
+            borderColor={C.accentHi}
+            color={C.bg}
+            p={6}
+            px={10}
+            rounded={5}
+            fontWeight={700}
+          >
+            gamma
+          </text>
+        </view>
       </view>
 
       <view display="flex" flexDir="col" gap={8}>
@@ -132,32 +289,28 @@ function AbsolutePositioningDemo() {
   return (
     <view display="flex" flexDir="col" gap={12}>
       <view display="flex" flexDir="col" gap={4}>
-        <text fontSize={14} fontWeight={700} color={C.text}>
+        <view fontSize={14} fontWeight={700} color={C.text}>
           Absolute positioning
-        </text>
-        <text fontSize={12} color={C.textMuted}>
+        </view>
+        <view fontSize={12} color={C.textMuted}>
           position="absolute" with top / right / bottom / left insets
-        </text>
+        </view>
       </view>
 
       <view display="flex" flexDir="row" gap={12}>
         {(
           [
-            { label: 'top + left', pos: { top: 8, left: 8 }, c: C.accentDim },
-            {
-              label: 'top + right',
-              pos: { top: 8, right: 8 },
-              c: C.primaryDim,
-            },
+            { label: 'top + left', pos: { top: 8, left: 8 }, c: C.accent },
+            { label: 'top + right', pos: { top: 8, right: 8 }, c: C.primary },
             {
               label: 'bottom + right',
               pos: { bottom: 8, right: 8 },
-              c: C.successDim,
+              c: C.success,
             },
             {
               label: 'bottom + left',
               pos: { bottom: 8, left: 8 },
-              c: C.warningDim,
+              c: C.warning,
             },
           ] as const
         ).map(({ label, pos, c }) => (
@@ -206,9 +359,9 @@ function AbsolutePositioningDemo() {
         items="center"
         justify="center"
       >
-        <text fontSize={12} color={C.textDim}>
+        <view fontSize={12} color={C.textDim}>
           relative container bg
-        </text>
+        </view>
         <view
           position="absolute"
           top={10}
@@ -221,7 +374,7 @@ function AbsolutePositioningDemo() {
           items="center"
           justify="center"
         >
-          <AbsClickCounter color={C.accentDim} />
+          <AbsClickCounter color={C.accent} />
         </view>
       </view>
     </view>
@@ -240,7 +393,7 @@ export function LayoutPage() {
       flexDir="col"
       gap={0}
       h="full"
-      scroll
+      scrollY
       scrollbarRadius={5}
     >
       <view
@@ -262,14 +415,14 @@ export function LayoutPage() {
 
       <view display="flex" flexDir="col" gap={24} p={24}>
         <view display="flex" flexDir="col" gap={12}>
-          <text fontSize={14} fontWeight={700} color={C.text}>
+          <view fontSize={14} fontWeight={700} color={C.text}>
             Flexbox — justify variants
-          </text>
+          </view>
           {(['center', 'between', 'around', 'evenly'] as const).map((j) => (
             <view key={j} display="flex" flexDir="col" gap={4}>
-              <text fontSize={11} fontWeight={600} color={C.textMuted}>
+              <view fontSize={11} fontWeight={600} color={C.textMuted}>
                 justify="{j}"
-              </text>
+              </view>
               <view
                 display="flex"
                 flexDir="row"
@@ -280,11 +433,9 @@ export function LayoutPage() {
                 border={1}
                 borderColor={C.border}
               >
-                {[C.accentHi, C.primaryHi, C.successHi, C.warningHi].map(
-                  (c, i) => (
-                    <view key={i} w={36} h={36} bg={c} rounded={4} />
-                  ),
-                )}
+                {[C.accent, C.primary, C.success, C.warning].map((c, i) => (
+                  <view key={i} w={36} h={36} bg={c} rounded={4} />
+                ))}
               </view>
             </view>
           ))}
@@ -299,9 +450,9 @@ export function LayoutPage() {
           <view display="flex" flexDir="row" gap={12}>
             {(['start', 'center', 'end', 'stretch'] as const).map((a) => (
               <view key={a} display="flex" flexDir="col" gap={4} flex={1}>
-                <text fontSize={11} fontWeight={600} color={C.textMuted}>
+                <view fontSize={11} fontWeight={600} color={C.textMuted}>
                   items="{a}"
-                </text>
+                </view>
                 <view
                   display="flex"
                   flexDir="row"
@@ -316,15 +467,15 @@ export function LayoutPage() {
                 >
                   {a === 'stretch' ? (
                     <>
-                      <view w={24} bg={C.accentHi} rounded={4} />
-                      <view w={24} bg={C.primaryHi} rounded={4} />
-                      <view w={24} bg={C.successHi} rounded={4} />
+                      <view w={24} bg={C.accent} rounded={4} />
+                      <view w={24} bg={C.primary} rounded={4} />
+                      <view w={24} bg={C.success} rounded={4} />
                     </>
                   ) : (
                     <>
-                      <view w={24} h={24} bg={C.accentHi} rounded={4} />
-                      <view w={24} h={36} bg={C.primaryHi} rounded={4} />
-                      <view w={24} h={16} bg={C.successHi} rounded={4} />
+                      <view w={24} h={24} bg={C.accent} rounded={4} />
+                      <view w={24} h={36} bg={C.primary} rounded={4} />
+                      <view w={24} h={16} bg={C.success} rounded={4} />
                     </>
                   )}
                 </view>
@@ -342,39 +493,39 @@ export function LayoutPage() {
           <view display="flex" flexDir="row" gap={12} items="center">
             <view display="flex" flexDir="col" items="center" gap={4}>
               <view w={60} h={60} bg={C.accent} roundedTL={24} />
-              <text fontSize={10} color={C.textMuted}>
+              <view fontSize={10} color={C.textMuted}>
                 TL
-              </text>
+              </view>
             </view>
             <view display="flex" flexDir="col" items="center" gap={4}>
               <view w={60} h={60} bg={C.primary} roundedTR={24} />
-              <text fontSize={10} color={C.textMuted}>
+              <view fontSize={10} color={C.textMuted}>
                 TR
-              </text>
+              </view>
             </view>
             <view display="flex" flexDir="col" items="center" gap={4}>
               <view w={60} h={60} bg={C.success} roundedBR={24} />
-              <text fontSize={10} color={C.textMuted}>
+              <view fontSize={10} color={C.textMuted}>
                 BR
-              </text>
+              </view>
             </view>
             <view display="flex" flexDir="col" items="center" gap={4}>
               <view w={60} h={60} bg={C.warning} roundedBL={24} />
-              <text fontSize={10} color={C.textMuted}>
+              <view fontSize={10} color={C.textMuted}>
                 BL
-              </text>
+              </view>
             </view>
             <view display="flex" flexDir="col" items="center" gap={4}>
               <view w={60} h={60} bg={C.accent} roundedTL={24} roundedBR={24} />
-              <text fontSize={10} color={C.textMuted}>
+              <view fontSize={10} color={C.textMuted}>
                 TL+BR
-              </text>
+              </view>
             </view>
             <view display="flex" flexDir="col" items="center" gap={4}>
               <view w={60} h={60} bg={C.danger} roundedTR={24} roundedBL={24} />
-              <text fontSize={10} color={C.textMuted}>
+              <view fontSize={10} color={C.textMuted}>
                 TR+BL
-              </text>
+              </view>
             </view>
           </view>
         </view>
@@ -382,9 +533,9 @@ export function LayoutPage() {
         <Divider />
 
         <view display="flex" flexDir="col" gap={12}>
-          <text fontSize={14} fontWeight={700} color={C.text}>
+          <view fontSize={14} fontWeight={700} color={C.text}>
             Per-side borders
-          </text>
+          </view>
           <view display="flex" flexDir="row" gap={12} items="center">
             {[
               { side: 'Top', prop: { borderTop: 3 }, color: C.accentHi },
@@ -419,9 +570,9 @@ export function LayoutPage() {
         <Divider />
 
         <view display="flex" flexDir="col" gap={12}>
-          <text fontSize={14} fontWeight={700} color={C.text}>
+          <view fontSize={14} fontWeight={700} color={C.text}>
             Opacity scale
-          </text>
+          </view>
           <view display="flex" flexDir="row" gap={8} items="center">
             {[1, 0.8, 0.6, 0.4, 0.2, 0.1].map((op) => (
               <view
@@ -454,12 +605,12 @@ export function LayoutPage() {
 
         <view display="flex" flexDir="col" gap={12}>
           <view display="flex" flexDir="col" gap={4}>
-            <text fontSize={14} fontWeight={700} color={C.text}>
+            <view fontSize={14} fontWeight={700} color={C.text}>
               Transforms
-            </text>
-            <text fontSize={12} color={C.textMuted}>
+            </view>
+            <view fontSize={12} color={C.textMuted}>
               translate, rotate, scale, and hover:scale without changing layout
-            </text>
+            </view>
           </view>
           <view
             display="flex"
@@ -512,9 +663,9 @@ export function LayoutPage() {
 
         <view display="flex" flexDir="col" gap={12}>
           <view display="flex" flexDir="row" items="center" gap={20}>
-            <text fontSize={14} fontWeight={700} color={C.text}>
+            <view fontSize={14} fontWeight={700} color={C.text}>
               Dynamic gap / padding
-            </text>
+            </view>
             <view display="flex" flexDir="row" items="center" gap={8}>
               <button
                 onClick={() => setGap((g) => Math.max(2, g - 2))}
@@ -599,15 +750,7 @@ export function LayoutPage() {
                 key={l}
                 flex={1}
                 p={padding}
-                bg={
-                  [
-                    C.accentDim,
-                    C.primaryDim,
-                    C.successDim,
-                    '#422006',
-                    C.dangerDim,
-                  ][i]
-                }
+                bg={[C.accent, C.primary, C.success, C.warning, C.danger][i]}
                 rounded={8}
                 display="flex"
                 items="center"
@@ -625,12 +768,12 @@ export function LayoutPage() {
 
         <view display="flex" flexDir="col" gap={12}>
           <view display="flex" flexDir="col" gap={4}>
-            <text fontSize={14} fontWeight={700} color={C.text}>
+            <view fontSize={14} fontWeight={700} color={C.text}>
               Buttons
-            </text>
-            <text fontSize={12} color={C.textMuted}>
+            </view>
+            <view fontSize={12} color={C.textMuted}>
               Various button configurations and property combinations
-            </text>
+            </view>
           </view>
 
           <view display="flex" flexDir="col" gap={12}>
@@ -1042,6 +1185,10 @@ export function LayoutPage() {
 
         <Divider />
 
+        <InlineFlowDemo />
+
+        <Divider />
+
         <TextAlignDemo />
 
         <Divider />
@@ -1051,6 +1198,77 @@ export function LayoutPage() {
         <Divider />
 
         <AbsolutePositioningDemo />
+      </view>
+    </view>
+  );
+}
+
+function InlineFlowDemo() {
+  return (
+    <view display="flex" flexDir="col" gap={12}>
+      <view display="flex" flexDir="col" gap={4}>
+        <text fontSize={14} fontWeight={700} color={C.text}>
+          Inline flow (text + text elements)
+        </text>
+        <text fontSize={12} color={C.textMuted}>
+          Bare text and consecutive text elements should sit on one line. Drag
+          to select across them.
+        </text>
+      </view>
+
+      <view
+        selectable
+        p={16}
+        bg={C.surface2}
+        rounded={8}
+        border={1}
+        textAlign="center"
+        borderColor={C.border}
+        fontSize={14}
+        color={C.text}
+      >
+        Hello{' '}
+        <text color={C.accentHi} fontWeight={700}>
+          world
+        </text>
+        <text color={C.textMuted}> from </text>
+        <text color={C.successHi} fontWeight={700}>
+          uzumaki
+        </text>
+        !
+      </view>
+
+      <view
+        selectable
+        p={16}
+        bg={C.surface2}
+        rounded={8}
+        border={1}
+        borderColor={C.border}
+        display="flex"
+        flexDir="col"
+        gap={8}
+        fontSize={13}
+        color={C.text}
+      >
+        <view>
+          inline run: <text color={C.accentHi}>red</text>{' '}
+          <text color={C.primaryHi}>green</text>{' '}
+          <text color={C.successHi}>blue</text> end.
+        </view>
+        <view>
+          mixed siblings:
+          <text color={C.warningHi} fontWeight={700}>
+            {' '}
+            tag-A{' '}
+          </text>
+          plain
+          <text color={C.accentHi} fontWeight={700}>
+            {' '}
+            tag-B{' '}
+          </text>
+          plain again.
+        </view>
       </view>
     </view>
   );
@@ -1138,7 +1356,7 @@ function ScrollDemo() {
                 w={140}
                 h={80}
                 textWrap="nowrap"
-                bg={i % 2 === 0 ? C.primaryDim : C.accentDim}
+                bg={i % 2 === 0 ? C.primary : C.accent}
                 rounded={8}
                 p={10}
                 display="flex"
@@ -1196,7 +1414,7 @@ function ScrollDemo() {
               <view
                 key={i}
                 p={12}
-                bg={i % 2 === 0 ? C.successDim : C.warningDim}
+                bg={i % 2 === 0 ? C.success : C.warning}
                 rounded={8}
                 display="flex"
                 flexDir="col"

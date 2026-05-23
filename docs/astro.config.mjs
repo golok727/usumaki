@@ -67,6 +67,7 @@ export default defineConfig({
           label: 'Guides',
           items: [
             { label: 'Style Native UI', slug: 'guides/styling' },
+            { label: 'Theme with Variables', slug: 'guides/theming' },
             { label: 'Handle Events and State', slug: 'guides/events-state' },
             { label: 'Load Images and Resources', slug: 'guides/resources' },
             { label: 'Configure an App', slug: 'guides/configuration' },

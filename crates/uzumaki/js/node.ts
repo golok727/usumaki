@@ -1,5 +1,5 @@
-import core, { type CoreNode } from 'ext:uzumaki/core.ts';
-import { getNode, registerNode, unregisterNode } from 'ext:uzumaki/registry.ts';
+import core, { CoreNode } from 'ext:uzumaki/core.ts';
+import { getNode, registerNode } from 'ext:uzumaki/registry.ts';
 import type { NodeId } from 'ext:uzumaki/types.ts';
 import type { Window } from 'ext:uzumaki/window.ts';
 
@@ -28,11 +28,6 @@ export class UzNode {
     registerNode(this);
   }
 
-  static fromNodeId(window: Window, nodeId: NodeId | null): UzNode | null {
-    if (nodeId == null) return null;
-    return getNode(window, nodeId) ?? null;
-  }
-
   get nodeId(): NodeId {
     return this._native.id;
   }
@@ -42,34 +37,27 @@ export class UzNode {
   }
 
   get nodeType(): number {
-    // NodeData::Root => 1,
-    // NodeData::Element(_) => 2,
-    // NodeData::Text(_) => 3,
     return this._native.nodeType;
   }
 
-  // get nodeName(): string {
-  //   return this._native.nodeName;
-  // }
-
   get parentNode(): UzNode | null {
-    return UzNode.fromNodeId(this.window, this._native.parentNodeId);
+    return resolveNode(this.window, this._native.parentNodeId);
   }
 
   get firstChild(): UzNode | null {
-    return UzNode.fromNodeId(this.window, this._native.firstChildId);
+    return resolveNode(this.window, this._native.firstChildId);
   }
 
   get lastChild(): UzNode | null {
-    return UzNode.fromNodeId(this.window, this._native.lastChildId);
+    return resolveNode(this.window, this._native.lastChildId);
   }
 
   get nextSibling(): UzNode | null {
-    return UzNode.fromNodeId(this.window, this._native.nextSiblingId);
+    return resolveNode(this.window, this._native.nextSiblingId);
   }
 
   get previousSibling(): UzNode | null {
-    return UzNode.fromNodeId(this.window, this._native.previousSiblingId);
+    return resolveNode(this.window, this._native.previousSiblingId);
   }
 
   get textContent(): string | null {
@@ -77,8 +65,6 @@ export class UzNode {
   }
 
   set textContent(text: string | null) {
-    // Fixme this should behave different for elements vs text nodes
-    // text nodes should set node.textContent, for elements - clear the children and append the new text node
     this._native.textContent = text ?? '';
   }
 
@@ -104,7 +90,7 @@ export class UzNode {
   }
 
   /**
-   * Detach this node from its parent
+   * Detach this node from its parent.
    */
   remove(): void {
     if (!this.window.isDisposed) {
@@ -122,25 +108,36 @@ export class UzNode {
     block = 'nearest',
     inline = 'nearest',
   }: { block?: ScrollAlign; inline?: ScrollAlign } = {}): void {
-    if (!this.window.isDisposed) {
+    if (
+      !this.window.isDisposed &&
+      SCROLL_ALIGN[block] != null &&
+      SCROLL_ALIGN[inline] != null
+    ) {
       this._native.scrollIntoView(SCROLL_ALIGN[block], SCROLL_ALIGN[inline]);
     }
-  }
-
-  destroy(): void {
-    this.remove();
-    let child = this.firstChild;
-    while (child) {
-      const next = child.nextSibling;
-      child.destroy();
-      child = next;
-    }
-    unregisterNode(this.window, this.nodeId);
   }
 }
 
 export class UzTextNode extends UzNode {
   constructor(window: Window, text: string) {
     super(window, core.createTextNode(window.id, text));
+  }
+}
+
+/**
+ * Resolve a node id to its JS wrapper. If the wrapper was collected but
+ * Rust still owns the slab entry (because the node is connected to the
+ * tree), rebuild a fresh base `UzNode` around it. Module-private: callers
+ * go through traversal getters like `parentNode` / `firstChild`. The
+ * `CoreNode` constructor is an implementation detail, not user-facing.
+ */
+function resolveNode(window: Window, nodeId: NodeId | null): UzNode | null {
+  if (nodeId == null) return null;
+  const existing = getNode(window, nodeId);
+  if (existing) return existing;
+  try {
+    return new UzNode(window, new CoreNode(window.id, nodeId));
+  } catch {
+    return null;
   }
 }

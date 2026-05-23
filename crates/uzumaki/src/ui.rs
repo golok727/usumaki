@@ -5,7 +5,7 @@ use crate::{
     element::{ElementNode, ImageData, ImageNode, TextContent, TextRunEntry, TextSelectRun},
     input::InputState,
     interactivity::{HitTestState, HitboxStore},
-    layout::LayoutEngine,
+    layout::TaffyLayoutExt,
     node::{Node, ScrollAxis, TextNode, UzNodeId},
     paint::{
         ScrollThumbRect,
@@ -74,39 +74,40 @@ impl DragMode {
 pub struct UIState {
     pub nodes: Slab<Node>,
 
-    pub layout_engine: LayoutEngine,
     pub root: Option<UzNodeId>,
-    /// Hitboxes registered during the last paint pass.
     pub hitbox_store: HitboxStore,
-    /// Current hit test state (updated on mouse move).
+
     pub hit_state: HitTestState,
-    /// Currently focuswsed ndoe
+
     pub focused_node: Option<UzNodeId>,
-    pending_scroll_node_into_view: Option<(UzNodeId, ScrollIntoViewOptions)>,
-    /// Last click time (for multi-click detection).
+
     pub last_click_time: Option<std::time::Instant>,
-    /// Last clicked node (for multi-click detection).
+
     pub last_click_node: Option<UzNodeId>,
-    /// Consecutive click count (1=normal, 2=word, 3=line, 4=select all).
+
     pub click_count: u8,
-    /// Whether the OS window is focused.
+
     pub window_focused: bool,
-    /// Scroll thumb rects from last paint pass (for hit testing).
+
     pub scroll_thumbs: Vec<ScrollThumbRect>,
-    /// Current UI-owned drag, following Blitz's document-level drag model.
+
     pub drag_mode: DragMode,
-    /// Short-lived wheel routing capture for nested scroll continuity.
+
     pub wheel_capture: Option<ScrollWheelTarget>,
     /// Current text selection within a textSelect view. `root == None` means
     /// there is no active view selection
     pub text_selection: TextSelection,
+    // TODO move this to renderer ?
     /// Text runs for textSelect subtrees, rebuilt each frame.
     pub selectable_text_runs: Vec<TextSelectRun>,
-}
 
-// Safety:  We only access it from main thread
-unsafe impl Send for UIState {}
-unsafe impl Sync for UIState {}
+    pending_scroll_node_into_view: Option<(UzNodeId, ScrollIntoViewOptions)>,
+
+    /// Set when something invalidates the hit tree (scroll, layout,
+    /// mutation) and a fresh hit-test is needed before input dispatch.
+    /// `hit_tree::rebuild` clears it.
+    pub hit_tree_dirty: bool,
+}
 
 impl Default for UIState {
     fn default() -> Self {
@@ -118,7 +119,6 @@ impl UIState {
     pub fn new() -> Self {
         Self {
             nodes: Slab::new(),
-            layout_engine: LayoutEngine::new(),
             root: None,
             hitbox_store: HitboxStore::default(),
             hit_state: HitTestState::default(),
@@ -132,6 +132,7 @@ impl UIState {
             drag_mode: DragMode::None,
             wheel_capture: None,
             text_selection: TextSelection::default(),
+            hit_tree_dirty: true,
             selectable_text_runs: Vec::new(),
         }
     }
@@ -157,19 +158,15 @@ impl UIState {
     }
 
     /// Resolve the effective cursor for `node_id`.
-    /// Precedence at the hit node: explicit style -> behavior default -> selectable
-    /// text fallback. Otherwise walk ancestors honoring only explicit overrides.
+    /// Precedence: inherited/authored style -> behavior default -> selectable
+    /// text fallback.
     pub fn resolve_cursor(&self, node_id: UzNodeId) -> UzCursorIcon {
         let Some(node) = self.nodes.get(node_id) else {
             return UzCursorIcon::Default;
         };
 
-        let style = node.style_variants.compute_style(
-            &node.style,
-            node_id,
-            &self.hit_state,
-            self.focused_node == Some(node_id),
-        );
+        let style = node.computed_style();
+
         if let Some(c) = style.cursor {
             return c;
         }
@@ -182,27 +179,6 @@ impl UIState {
             return UzCursorIcon::Text;
         }
 
-        // Walk ancestors. An explicit `cursor` style wins, but if any ancestor
-        // is a text-selectable scope (`selectable` view) we should also show
-        // the text cursor — otherwise an inner non-selectable `<text>` inside
-        // a selectable view never gets the I-beam.
-        let mut cur = node.parent;
-        while let Some(id) = cur {
-            let n = &self.nodes[id];
-            let style = n.style_variants.compute_style(
-                &n.style,
-                id,
-                &self.hit_state,
-                self.focused_node == Some(id),
-            );
-            if let Some(c) = style.cursor {
-                return c;
-            }
-            if n.is_text_selectable() {
-                return UzCursorIcon::Text;
-            }
-            cur = n.parent;
-        }
         UzCursorIcon::Default
     }
 
@@ -273,12 +249,6 @@ impl UIState {
         node_id
     }
 
-    /// Update a node's style. Layout state is rebuilt on the next frame.
-    pub fn set_style(&mut self, node_id: UzNodeId, style: UzStyle) {
-        let node = &mut self.nodes[node_id];
-        node.style = style;
-    }
-
     pub fn set_root(&mut self, node_id: UzNodeId) {
         self.root = Some(node_id);
     }
@@ -294,6 +264,11 @@ impl UIState {
         self.detach_from_parent(child_id);
 
         self.nodes[child_id].parent = Some(parent_id);
+        // Seed layout_parent to match — the construct phase reassigns it
+        // every frame, but seeding here keeps direct DOM access (e.g.,
+        // hit-test against a manually built tree) consistent before the
+        // first layout pass runs.
+        self.nodes[child_id].layout_parent = Some(parent_id);
         self.nodes[parent_id].children.push(child_id);
     }
 
@@ -306,15 +281,32 @@ impl UIState {
         }
         self.detach_from_parent(child_id);
         self.nodes[child_id].parent = Some(parent_id);
+        self.nodes[child_id].layout_parent = Some(parent_id);
         let Some(index) = self.nodes[parent_id]
             .children
             .iter()
             .position(|&id| id == before_id)
         else {
             self.nodes[child_id].parent = None;
+            self.nodes[child_id].layout_parent = None;
             return;
         };
         self.nodes[parent_id].children.insert(index, child_id);
+    }
+
+    /// Walks the parent chain from `node_id` and returns true if it reaches
+    /// the document root. Used by the pending-destroy drain to decide whether
+    /// a wrapper-less native node still belongs to the tree.
+    pub fn is_connected(&self, node_id: UzNodeId) -> bool {
+        let root = self.root;
+        let mut cur = Some(node_id);
+        while let Some(id) = cur {
+            if Some(id) == root {
+                return true;
+            }
+            cur = self.nodes.get(id).and_then(|n| n.parent);
+        }
+        false
     }
 
     pub fn first_child(&self, node_id: UzNodeId) -> Option<UzNodeId> {
@@ -359,9 +351,11 @@ impl UIState {
     /// view) instead of themselves, and we always use default options.
     pub fn request_scroll_focus_into_view(&mut self, node_id: UzNodeId) {
         let target = if self.nodes.get(node_id).is_some_and(|n| n.is_text_input()) {
+            // Use the layout parent so an input wrapped by an anonymous
+            // inline run still scrolls its real visual container.
             self.nodes
                 .get(node_id)
-                .and_then(|n| n.parent)
+                .and_then(|n| n.layout_parent)
                 .unwrap_or(node_id)
         } else {
             node_id
@@ -401,32 +395,20 @@ impl UIState {
             return;
         };
 
-        let target_extent = axis_size(target_node.final_layout.size, axis);
-        let content_extent = axis_size(scroller_ref.final_layout.content_size, axis);
+        let target_extent = target_node.final_layout.axis_size(axis);
+        let content_extent = scroller_ref.final_layout.axis_scroll_content_size(axis);
 
         // Clamp viewport by the root rect so a scroller overflowing the window
         // doesn't think it has more visible space than the user can actually see.
         let root_extent = self
             .root
             .and_then(|r| self.nodes.get(r))
-            .map(|n| axis_size(n.final_layout.size, axis))
+            .map(|n| n.final_layout.axis_size(axis))
             .unwrap_or(f32::MAX);
-        let scroller_extent = axis_size(scroller_ref.final_layout.size, axis);
+        let scroller_extent = scroller_ref.final_layout.axis_content_box_size(axis);
         let clipped_end = (scroller_abs + scroller_extent).min(root_extent);
         let true_viewport = (clipped_end - scroller_abs).max(0.0);
-
-        // Match render: a horizontal scrollbar steals from the Y viewport, but
-        // a vertical scrollbar does not steal from the X viewport.
-        let viewport_extent = match axis {
-            ScrollAxis::Y => scroll::vertical_scroll_visible_height(
-                true_viewport,
-                scroller_ref.final_layout.content_size.width,
-                scroller_ref.final_layout.size.width,
-                scroller_ref.style.overflow_x.is_scrollable(),
-                scroller_ref.style.scrollbar.width,
-            ),
-            ScrollAxis::X => true_viewport,
-        };
+        let viewport_extent = true_viewport;
 
         let cur_offset = scroller_ref.scroll_state.offset(axis);
 
@@ -445,6 +427,7 @@ impl UIState {
         self.nodes[scroller_id]
             .scroll_state
             .set_offset(axis, next_offset);
+        self.hit_tree_dirty = true;
     }
 
     fn nearest_overflow_scroller(
@@ -452,17 +435,20 @@ impl UIState {
         target_id: UzNodeId,
         axis: ScrollAxis,
     ) -> Option<UzNodeId> {
-        let mut ancestor = nodes.get(target_id).and_then(|n| n.parent)?;
+        // Walk the layout tree — `overflow` is a layout/visual property
+        // and the scroll container that paints around `target_id` may be
+        // separated by anonymous wrappers in the layout tree.
+        let mut ancestor = nodes.get(target_id).and_then(|n| n.layout_parent)?;
         loop {
             let node = nodes.get(ancestor)?;
             let scrollable = match axis {
-                ScrollAxis::Y => node.style.overflow_y.is_scrollable(),
-                ScrollAxis::X => node.style.overflow_x.is_scrollable(),
+                ScrollAxis::Y => node.computed_style().overflow_y.is_scrollable(),
+                ScrollAxis::X => node.computed_style().overflow_x.is_scrollable(),
             };
             if scrollable {
                 return Some(ancestor);
             }
-            ancestor = node.parent?;
+            ancestor = node.layout_parent?;
         }
     }
 
@@ -480,13 +466,15 @@ impl UIState {
         let mut past_scroller = false;
         loop {
             let node = nodes.get(cur)?;
-            let loc = axis_loc(node.final_layout.location, axis);
+            let loc = node.final_layout.axis_location(axis);
             if past_scroller {
                 scroller_abs += loc;
             } else {
                 rel += loc;
             }
-            match node.parent {
+            // `final_layout.location` is positioned relative to the
+            // layout parent, so accumulate via `layout_parent`.
+            match node.layout_parent {
                 Some(pid) if !past_scroller && pid == scroller_id => {
                     past_scroller = true;
                     cur = pid;
@@ -523,6 +511,7 @@ impl UIState {
 
         self.remove_child_ref(parent_id, child_id);
         self.nodes[child_id].parent = None;
+        self.nodes[child_id].layout_parent = None;
     }
 
     /// Single source of truth for clearing stale NodeId references when a node
@@ -587,6 +576,7 @@ impl UIState {
             return;
         }
         self.nodes[child_id].parent = None;
+        self.nodes[child_id].layout_parent = None;
         // The node lives on in the slab until its JS wrapper is collected, but
         // every long-lived NodeId field (selection, focus, hit-state, scroll
         // locks…) refers to nodes by their place in the tree. Once detached
@@ -614,6 +604,7 @@ impl UIState {
                 && child.parent == Some(node_id)
             {
                 child.parent = None;
+                child.layout_parent = None;
             }
         }
 
@@ -674,85 +665,52 @@ impl UIState {
         self.on_node_removed(id);
     }
 
-    pub fn compute_layout(&mut self, width: f32, height: f32, text_renderer: &mut TextRenderer) {
-        self.layout_engine.compute_layout(
-            &self.nodes,
-            self.root,
-            &self.hit_state,
-            self.focused_node,
-            width,
-            height,
-            text_renderer,
-        );
-        self.copy_final_layouts();
-        self.refresh_text_layouts(text_renderer);
+    pub fn compute_layout(
+        &mut self,
+        width: f32,
+        height: f32,
+        text_renderer: &mut TextRenderer,
+        scale: f64,
+    ) {
+        self.compute_styles();
+        self.resolve_layout_children();
+        crate::layout::LayoutTree::run(self, text_renderer, width, height);
         if let Some((nid, opts)) = self.pending_scroll_node_into_view.take() {
             self.scroll_node_into_view(nid, opts);
         }
+        // Layout invalidates the hit tree — refresh it now so input
+        // dispatched between this frame and the next paint operates on
+        // current geometry.
+        crate::hit_tree::rebuild(self, text_renderer, scale);
     }
 
-    /// Copy taffy's layout result onto each node so the paint pass can read
-    /// `node.final_layout` directly without going through the layout engine's
-    /// id → taffy_id → slab indirection.
-    fn copy_final_layouts(&mut self) {
-        for (node_id, node) in self.nodes.iter_mut() {
-            node.final_layout = self
-                .layout_engine
-                .layout(node_id)
-                .copied()
-                .unwrap_or_else(taffy::Layout::new);
+    /// Rebuild the hit tree if any state mutation has flagged it dirty
+    /// (scroll, mutation, etc.). Cheap when nothing has changed.
+    pub fn ensure_hit_tree_fresh(&mut self, text_renderer: &mut TextRenderer, scale: f64) {
+        if self.hit_tree_dirty {
+            crate::hit_tree::rebuild(self, text_renderer, scale);
         }
     }
 
-    /// Rebuild cached parley layouts for every text-bearing node at its final
-    /// taffy width. Runs once per frame after layout. Paint / selection /
-    /// hit-test then reuse `node.text_layout` instead of rebuilding.
-    fn refresh_text_layouts(&mut self, text_renderer: &mut TextRenderer) {
+    fn compute_styles(&mut self) {
         let Some(root) = self.root else { return };
-        self.refresh_text_layouts_at(root, None, text_renderer);
+        self.compute_styles_at(root, None);
     }
 
-    fn refresh_text_layouts_at(
-        &mut self,
-        node_id: UzNodeId,
-        parent_style: Option<&UzStyle>,
-        text_renderer: &mut TextRenderer,
-    ) {
-        let computed = self.computed_style(node_id, parent_style);
+    fn compute_styles_at(&mut self, node_id: UzNodeId, parent_style: Option<UzStyle>) {
+        let hover = self.hit_state.is_hovered(node_id);
+        let active = self.hit_state.is_active(node_id);
+        let focus = self.focused_node == Some(node_id);
+
+        self.nodes[node_id].compute_styles(hover, active, focus, parent_style.as_ref());
+
+        let computed = self.nodes[node_id].computed_style().clone();
         let children = self.nodes[node_id].children.clone();
-
-        let is_input = self.nodes[node_id].is_text_input();
-        let text = (!is_input)
-            .then(|| {
-                self.nodes[node_id]
-                    .get_text_content()
-                    .map(|t| t.content.clone())
-            })
-            .flatten();
-
-        if let Some(text) = text {
-            let width = Some(self.nodes[node_id].final_layout.size.width);
-            let layout = text_renderer.build_layout(&text, &computed.text, width);
-            self.nodes[node_id].text_layout = Some(layout);
-        } else {
-            self.nodes[node_id].text_layout = None;
+        for child_id in children {
+            if self.nodes.contains(child_id) {
+                self.compute_styles_at(child_id, Some(computed.clone()));
+            }
         }
-
-        for cid in children {
-            self.refresh_text_layouts_at(cid, Some(&computed), text_renderer);
-        }
-    }
-
-    pub(crate) fn computed_style(&self, node_id: UzNodeId, parent: Option<&UzStyle>) -> UzStyle {
-        let node = &self.nodes[node_id];
-        let parent = parent.unwrap_or(&node.style);
-        node.style_variants.compute_style_inherited(
-            &node.style,
-            parent,
-            node_id,
-            &self.hit_state,
-            self.focused_node == Some(node_id),
-        )
     }
 
     /// Run hit test at the given mouse position and update hit_state.
@@ -767,12 +725,15 @@ impl UIState {
     }
 
     fn hit_path(&self, top: UzNodeId) -> Vec<UzNodeId> {
+        // The hit-test top node lives in the painted layout tree — walk
+        // `layout_parent` so anonymous wrappers between the hit and a
+        // hovered ancestor stay in the path.
         let mut path = Vec::new();
         let mut current = Some(top);
         while let Some(id) = current {
             if self.nodes.get(id).is_some() {
                 path.push(id);
-                current = self.nodes[id].parent;
+                current = self.nodes[id].layout_parent;
             } else {
                 break;
             }
@@ -809,13 +770,16 @@ impl UIState {
         node_id: UzNodeId,
         mut matches: impl FnMut(&Node) -> bool,
     ) -> Option<UzNodeId> {
+        // Used by `nearest_button_ancestor` and similar — the question is
+        // "what interactive ancestor visually contains this hit?", which
+        // is a layout-tree question.
         let mut current = Some(node_id);
         while let Some(id) = current {
             let node = self.nodes.get(id)?;
             if matches(node) {
                 return Some(id);
             }
-            current = node.parent;
+            current = node.layout_parent;
         }
         None
     }
@@ -862,25 +826,12 @@ impl UIState {
             {
                 return Some(id);
             }
-            cur = self.nodes.get(id).and_then(|n| n.parent);
+            // Layout walk: a hit on an anonymous wrapper inside a
+            // selectable container should still find that container as
+            // the run root.
+            cur = self.nodes.get(id).and_then(|n| n.layout_parent);
         }
         None
-    }
-}
-
-#[inline]
-fn axis_size(size: taffy::Size<f32>, axis: ScrollAxis) -> f32 {
-    match axis {
-        ScrollAxis::X => size.width,
-        ScrollAxis::Y => size.height,
-    }
-}
-
-#[inline]
-fn axis_loc(point: taffy::Point<f32>, axis: ScrollAxis) -> f32 {
-    match axis {
-        ScrollAxis::X => point.x,
-        ScrollAxis::Y => point.y,
     }
 }
 
@@ -934,7 +885,14 @@ mod tests {
         let child = dom.create_text_element("pointer".into(), Default::default());
 
         dom.append_child(parent, child);
-        dom.nodes[parent].style.cursor = Some(UzCursorIcon::Pointer);
+        dom.nodes[parent].base_style().cursor = Some(UzCursorIcon::Pointer);
+
+        // Drive the cascade so `cursor` actually reaches the child's
+        // computed_style. `compute_styles_at` is private and the full
+        // pipeline needs a TextRenderer, so do the two-node walk inline.
+        dom.nodes[parent].compute_styles(false, false, false, None);
+        let parent_style = dom.nodes[parent].computed_style().clone();
+        dom.nodes[child].compute_styles(false, false, false, Some(&parent_style));
 
         assert_eq!(dom.resolve_cursor(child), UzCursorIcon::Pointer);
     }
@@ -1067,7 +1025,7 @@ mod tests {
         dom.set_root(parent);
         dom.append_child(parent, first);
         dom.append_child(parent, second);
-        dom.compute_layout(100.0, 100.0, &mut renderer);
+        dom.compute_layout(100.0, 100.0, &mut renderer, 1.0);
 
         let first_layout = &dom.nodes[first].final_layout;
         let second_layout = &dom.nodes[second].final_layout;

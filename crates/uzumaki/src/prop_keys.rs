@@ -1,11 +1,46 @@
-use std::str::FromStr;
+use std::{ops::Deref, str::FromStr};
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub(crate) enum StyleVariant {
-    Base,
-    Hover,
-    Active,
-    Focus,
+use serde::Deserialize;
+
+use crate::interactivity::StyleSlot;
+
+#[derive(Clone, Debug, Deserialize)]
+pub(crate) struct AttrValue<'a>(pub &'a str);
+
+impl<'a> From<&'a str> for AttrValue<'a> {
+    fn from(value: &'a str) -> Self {
+        AttrValue(value)
+    }
+}
+
+impl<'a> Deref for AttrValue<'a> {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        self.0
+    }
+}
+
+impl AttrValue<'_> {
+    pub fn as_str(&self) -> &str {
+        self.0
+    }
+
+    pub fn parse_bool(&self) -> bool {
+        crate::parse::parse_bool(self)
+    }
+
+    pub fn parse_f32(&self, rem_base: f32) -> Option<f32> {
+        crate::parse::parse_px_scalar(self, rem_base)
+    }
+
+    pub fn parse_length(&self, rem_base: f32) -> Option<crate::style::Length> {
+        crate::parse::parse_length(self, rem_base)
+    }
+
+    pub fn parse_definite_length(&self, rem_base: f32) -> Option<crate::style::DefiniteLength> {
+        crate::parse::parse_definite_length(self, rem_base)
+    }
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -67,6 +102,7 @@ pub(crate) enum StyleProp {
     ScrollbarHoverColor,
     ScrollbarActiveColor,
     ScrollbarRadius,
+    ScrollbarMode,
     TextSelect,
     TextWrap,
     WordBreak,
@@ -85,50 +121,36 @@ pub(crate) enum StyleProp {
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub(crate) enum ElementProp {
-    Value,
-    Placeholder,
-    Disabled,
-    MaxLength,
-    Multiline,
-    Secure,
-    Checked,
-    Focusable,
+pub(crate) enum AttributeKind<'a> {
+    Style(StyleProp, StyleSlot),
+    Element(&'a str),
 }
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub(crate) enum AttributeKind {
-    Style(StyleProp, StyleVariant),
-    Element(ElementProp),
-}
-
-impl FromStr for AttributeKind {
-    type Err = ();
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        if let Ok(ep) = value.parse::<ElementProp>() {
-            return Ok(AttributeKind::Element(ep));
+impl<'a> AttributeKind<'a> {
+    pub fn parse(name: &'a str) -> Self {
+        if let Some(rest) = name.strip_prefix("hover:")
+            && let Ok(prop) = rest.parse::<StyleProp>()
+        {
+            return Self::Style(prop, StyleSlot::Hover);
         }
 
-        if let Some(rest) = value.strip_prefix("hover:") {
-            return rest
-                .parse::<StyleProp>()
-                .map(|p| AttributeKind::Style(p, StyleVariant::Hover));
-        }
-        if let Some(rest) = value.strip_prefix("active:") {
-            return rest
-                .parse::<StyleProp>()
-                .map(|p| AttributeKind::Style(p, StyleVariant::Active));
-        }
-        if let Some(rest) = value.strip_prefix("focus:") {
-            return rest
-                .parse::<StyleProp>()
-                .map(|p| AttributeKind::Style(p, StyleVariant::Focus));
+        if let Some(rest) = name.strip_prefix("active:")
+            && let Ok(prop) = rest.parse::<StyleProp>()
+        {
+            return Self::Style(prop, StyleSlot::Active);
         }
 
-        value
-            .parse::<StyleProp>()
-            .map(|p| AttributeKind::Style(p, StyleVariant::Base))
+        if let Some(rest) = name.strip_prefix("focus:")
+            && let Ok(prop) = rest.parse::<StyleProp>()
+        {
+            return Self::Style(prop, StyleSlot::Focus);
+        }
+
+        if let Ok(prop) = name.parse::<StyleProp>() {
+            return Self::Style(prop, StyleSlot::Base);
+        }
+
+        Self::Element(name)
     }
 }
 
@@ -194,6 +216,7 @@ impl FromStr for StyleProp {
             "scrollbarHoverColor" => Self::ScrollbarHoverColor,
             "scrollbarActiveColor" => Self::ScrollbarActiveColor,
             "scrollbarRadius" => Self::ScrollbarRadius,
+            "scrollbarMode" => Self::ScrollbarMode,
             "selectable" => Self::TextSelect,
             "textWrap" => Self::TextWrap,
             "wordBreak" => Self::WordBreak,
@@ -209,25 +232,6 @@ impl FromStr for StyleProp {
             "scale" => Self::Scale,
             "scaleX" => Self::ScaleX,
             "scaleY" => Self::ScaleY,
-            _ => return Err(()),
-        })
-    }
-}
-
-// we should move these to Core*Element
-impl FromStr for ElementProp {
-    type Err = ();
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        Ok(match value {
-            "value" => Self::Value,
-            "placeholder" => Self::Placeholder,
-            "disabled" => Self::Disabled,
-            "maxLength" => Self::MaxLength,
-            "multiline" => Self::Multiline,
-            "secure" => Self::Secure,
-            "checked" => Self::Checked,
-            "focusable" => Self::Focusable,
             _ => return Err(()),
         })
     }

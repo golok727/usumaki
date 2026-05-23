@@ -266,7 +266,6 @@ body:has(.hero)::before {
   background: linear-gradient(90deg, var(--uz-accent), transparent);
 }
 
-
 /* ---------- Code ---------- */
 
 .expressive-code pre {

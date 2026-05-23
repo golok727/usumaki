@@ -1,6 +1,9 @@
 import { C } from './theme';
 import { Icon } from './icon';
 import type { Tab } from './types';
+import { openTemplateWindow } from './playgroundWindow';
+
+const uzumakiLogo = Uz.path.resource('assets/logo.svg');
 
 const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: 'dashboard', label: 'Dashboard', icon: 'layout-dashboard' },
@@ -10,6 +13,7 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: 'events', label: 'Mouse Events', icon: 'mouse-pointer-click' },
   // { id: 'window', label: 'Window Lab', icon: 'square-stack' },
   { id: 'timer', label: 'Timers', icon: 'timer' },
+  { id: 'clipboard', label: 'Clipboard', icon: 'clipboard' },
   { id: 'issues', label: 'GitHub Issues', icon: 'circle-dot' },
   { id: 'images', label: 'Images', icon: 'image' },
   { id: 'shiki', label: 'Code Highlight', icon: 'brackets' },
@@ -41,13 +45,11 @@ export function Sidebar({
     >
       <view mb={28} pt={4} display="flex" flexDir="col" gap={2}>
         <view display="flex" flexDir="row" items="center" gap={8}>
+          <image src={uzumakiLogo} w={18} h={18} />
           <text fontSize={17} fontWeight={800} color={C.accentHi}>
-            uzumaki
+            Uzumaki
           </text>
         </view>
-        <text fontSize={11} color={C.textMuted}>
-          playground
-        </text>
       </view>
 
       <view display="flex" flexDir="col" flex={1} gap={2}>
@@ -102,8 +104,29 @@ export function Sidebar({
           my={8}
         >
           <Icon name="square-stack" color={C.accentHi} size={16} />
+
           <text fontSize={13} fontWeight={700} color={C.accentHi}>
-            Open Modal
+            Settings
+          </text>
+        </button>
+        <button
+          onClick={() => openTemplateWindow()}
+          display="flex"
+          flexDir="row"
+          items="center"
+          gap={10}
+          px={12}
+          py={10}
+          rounded={8}
+          bg="transparent"
+          hover:bg={C.surface3}
+          border={1}
+          borderColor={C.border}
+          cursor="pointer"
+        >
+          <image src={uzumakiLogo} w={16} h={16} />
+          <text fontSize={13} fontWeight={600} color={C.textSub}>
+            Open Template
           </text>
         </button>
       </view>

@@ -1,10 +1,3 @@
-//! Shared scrolling math, scrollbar geometry, and painting.
-//!
-//! The render walker registers per-axis hit rects and emits paint commands;
-//! the actual visual style of the thumb (width, colors, radius) lives in
-//! `ScrollbarStyle` on the owning node and is plumbed through here so every
-//! scrollable surface — views and multiline inputs — agrees.
-
 use vello::Scene;
 use vello::kurbo::{Affine, Rect, RoundedRect, RoundedRectRadii};
 use vello::peniko::Fill;
@@ -12,8 +5,7 @@ use vello::peniko::Fill;
 use crate::node::{ScrollAxis, UzNodeId};
 use crate::style::{Bounds, ScrollbarStyle};
 
-pub const SCROLLBAR_SIDE_MARGIN: f64 = 4.0; // gap between thumb and container edge (perpendicular axis)
-pub const SCROLLBAR_END_MARGIN: f64 = 8.0; // gap at track start/end (along scroll axis)
+pub const SCROLLBAR_END_MARGIN: f64 = 0.0; // gap at track start/end (along scroll axis)
 pub const THUMB_MIN_LENGTH: f64 = 24.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -76,7 +68,7 @@ pub fn vertical_scroll_visible_height(
 ) -> f32 {
     let mut h = layout_height;
     if overflow_x_scrollable && layout_content_width > layout_size_width + 0.5 {
-        let reserve = (scrollbar_width as f64 + SCROLLBAR_SIDE_MARGIN).max(0.0);
+        let reserve = scrollbar_width.max(0.0) as f64;
         h = ((h as f64) - reserve).max(1.0) as f32;
     }
     h
@@ -162,7 +154,7 @@ pub fn thumb_geometry(
             let length =
                 (track * info.visible_size / info.content_size.max(1.0)).max(THUMB_MIN_LENGTH);
             let track_range = (track - length).max(0.0);
-            let track_x = view.width - thickness - SCROLLBAR_SIDE_MARGIN;
+            let track_x = view.width - thickness;
             ThumbGeometry {
                 local_x: track_x,
                 local_y: SCROLLBAR_END_MARGIN + scroll_ratio * track_range,
@@ -180,7 +172,7 @@ pub fn thumb_geometry(
             let length =
                 (track * info.visible_size / info.content_size.max(1.0)).max(THUMB_MIN_LENGTH);
             let track_range = (track - length).max(0.0);
-            let track_y = view.height - thickness - SCROLLBAR_SIDE_MARGIN;
+            let track_y = view.height - thickness;
             ThumbGeometry {
                 local_x: SCROLLBAR_END_MARGIN + scroll_ratio * track_range,
                 local_y: track_y,

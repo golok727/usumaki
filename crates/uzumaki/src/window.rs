@@ -3,32 +3,34 @@ use std::sync::Arc;
 use vello::peniko::Color;
 use vello::{AaSupport, RenderParams, RendererOptions, Scene};
 
+use winit::dpi::{LogicalPosition, LogicalSize};
+use winit::event_loop::EventLoopProxy;
 use winit::window::Window as WinitWindow;
 
+use crate::app::{UserEvent, WindowEntryId, WindowShared};
 use crate::cursor::UzCursorIcon;
 use crate::gpu::GpuContext;
-use crate::paint::render::Painter;
 use crate::text::TextRenderer;
-use crate::ui::UIState;
 
-pub struct Window {
-    pub(crate) surface: wgpu::Surface<'static>,
-    pub(crate) winit_window: Arc<WinitWindow>,
-    pub(crate) surface_config: wgpu::SurfaceConfiguration,
-    pub(crate) renderer: vello::Renderer,
-    pub(crate) scene: Scene,
-    pub(crate) text_renderer: TextRenderer,
+/// Per-window GPU resources owned by the main thread. The JS thread never
+/// touches anything in here. Built frames arrive via [`WindowShared::pending_frame`].
+pub struct GpuWindow {
+    pub winit_window: Arc<WinitWindow>,
+    pub shared: Arc<WindowShared>,
+    surface: wgpu::Surface<'static>,
+    surface_config: wgpu::SurfaceConfiguration,
+    renderer: vello::Renderer,
+    vello_target: Option<(wgpu::Texture, wgpu::TextureView)>,
     gpu: GpuContext,
-    current_cursor: UzCursorIcon,
     transparent: bool,
     valid_surface: bool,
-    vello_target: Option<(wgpu::Texture, wgpu::TextureView)>,
 }
 
-impl Window {
+impl GpuWindow {
     pub fn new(
         gpu: &GpuContext,
         winit_window: Arc<WinitWindow>,
+        shared: Arc<WindowShared>,
         transparent: bool,
     ) -> Result<Self> {
         let surface = gpu
@@ -37,7 +39,6 @@ impl Window {
             .context("Error creating surface")?;
 
         let size = winit_window.inner_size();
-
         let valid_surface = size.width != 0 && size.height != 0;
 
         let surface_caps = surface.get_capabilities(&gpu.adapter);
@@ -64,7 +65,6 @@ impl Window {
             alpha_mode,
             view_formats: vec![format],
         };
-
         surface.configure(&gpu.device, &surface_config);
 
         let renderer = vello::Renderer::new(
@@ -76,29 +76,21 @@ impl Window {
         )
         .context("Error creating renderer")?;
 
-        let scene = Scene::new();
-
         Ok(Self {
             winit_window,
-            renderer,
+            shared,
             surface,
             surface_config,
-            scene,
-            text_renderer: TextRenderer::new(),
+            renderer,
+            vello_target: None,
             gpu: gpu.clone(),
-            current_cursor: UzCursorIcon::Default,
             transparent,
             valid_surface,
-            vello_target: None,
         })
     }
 
     pub fn id(&self) -> winit::window::WindowId {
         self.winit_window.id()
-    }
-
-    pub fn scale_factor(&self) -> f64 {
-        self.winit_window.scale_factor()
     }
 
     pub fn set_transparent(&mut self, transparent: bool) {
@@ -115,43 +107,25 @@ impl Window {
         self.winit_window.request_redraw();
     }
 
-    pub fn inner_size(&self) -> winit::dpi::PhysicalSize<u32> {
-        self.winit_window.inner_size()
-    }
-
-    pub(crate) fn set_cursor(&mut self, icon: UzCursorIcon) {
-        if self.current_cursor == icon {
-            return;
-        }
-        self.current_cursor = icon;
-        self.winit_window.set_cursor(icon.to_winit());
-    }
-
-    pub(crate) fn paint_and_present(&mut self, dom: &mut UIState) {
+    /// Present the scene the JS thread parked in `shared.pending_frame`. If
+    /// no frame is parked (e.g. JS hasn't responded yet) this is a no-op.
+    pub fn present_pending_frame(&mut self) {
         if !self.valid_surface {
             return;
         }
+        let Some(scene) = self.shared.pending_frame.lock().unwrap().take() else {
+            return;
+        };
+        self.present_scene(&scene);
+    }
 
+    fn present_scene(&mut self, scene: &Scene) {
         let device = &self.gpu.device;
         let queue = &self.gpu.queue;
         let width = self.surface_config.width;
         let height = self.surface_config.height;
 
-        self.scene.reset();
-
-        let scale = self.winit_window.scale_factor();
-        // Layout uses logical pixels; rendering uses physical via Affine::scale
-        dom.compute_layout(
-            width as f32 / scale as f32,
-            height as f32 / scale as f32,
-            &mut self.text_renderer,
-        );
-
-        Painter::new(dom, &mut self.text_renderer, scale).paint(&mut self.scene);
-        dom.refresh_hit_test();
-
         let target_view = Self::ensure_vello_target(&mut self.vello_target, device, width, height);
-
         let render_params = RenderParams {
             base_color: if self.transparent {
                 Color::from_rgba8(0, 0, 0, 0)
@@ -163,10 +137,9 @@ impl Window {
             antialiasing_method: vello::AaConfig::Area,
         };
         self.renderer
-            .render_to_texture(device, queue, &self.scene, target_view, &render_params)
+            .render_to_texture(device, queue, scene, target_view, &render_params)
             .expect("Failed to render");
 
-        // Blit to surface
         let surface_texture = match self.surface.get_current_texture() {
             Ok(t) => t,
             Err(_) => {
@@ -230,7 +203,7 @@ impl Window {
         self.vello_target = None;
     }
 
-    pub(crate) fn on_resize(&mut self, width: u32, height: u32) -> bool {
+    pub fn on_resize(&mut self, width: u32, height: u32) -> bool {
         if width != 0 && height != 0 {
             self.resize_surface(width, height);
             self.valid_surface = true;
@@ -248,7 +221,66 @@ impl Window {
     }
 }
 
-fn choose_alpha_mode(
+/// JS-thread handle to a window. Holds the [`TextRenderer`] (font/layout
+/// contexts used by every layout pass) and the `Arc<WindowShared>` so layout
+/// can read size/scale and parked frames are published in place.
+///
+/// All winit interaction goes through `proxy` so the main thread retains
+/// exclusive ownership of platform-specific APIs.
+pub struct Window {
+    pub shared: Arc<WindowShared>,
+    pub text_renderer: TextRenderer,
+    proxy: EventLoopProxy<UserEvent>,
+    current_cursor: UzCursorIcon,
+}
+
+impl Window {
+    pub fn new(shared: Arc<WindowShared>, proxy: EventLoopProxy<UserEvent>) -> Self {
+        Self {
+            shared,
+            text_renderer: TextRenderer::new(),
+            proxy,
+            current_cursor: UzCursorIcon::Default,
+        }
+    }
+
+    pub fn id(&self) -> WindowEntryId {
+        self.shared.window_id
+    }
+
+    pub fn scale_factor(&self) -> f64 {
+        self.shared.load_scale_factor()
+    }
+
+    pub fn inner_size(&self) -> (u32, u32) {
+        self.shared.load_inner_size()
+    }
+
+    pub fn request_redraw(&self) {
+        self.shared.winit.request_redraw();
+    }
+
+    pub fn set_cursor(&mut self, icon: UzCursorIcon) {
+        if self.current_cursor == icon {
+            return;
+        }
+        self.current_cursor = icon;
+        let _ = self.proxy.send_event(UserEvent::SetCursor {
+            id: self.shared.window_id,
+            icon,
+        });
+    }
+
+    pub fn set_ime_cursor_area(&self, position: LogicalPosition<f64>, size: LogicalSize<f32>) {
+        let _ = self.proxy.send_event(UserEvent::SetImeArea {
+            id: self.shared.window_id,
+            position,
+            size,
+        });
+    }
+}
+
+pub(crate) fn choose_alpha_mode(
     modes: &[wgpu::CompositeAlphaMode],
     transparent: bool,
 ) -> wgpu::CompositeAlphaMode {

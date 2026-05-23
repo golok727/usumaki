@@ -9,7 +9,7 @@ description: Build JavaScript, copy resources, and package your app.
 uzumaki build
 ```
 
-The command runs `build.command`, copies declared resources, and writes packaged output to `pack.outputDir`.
+When `beforeBuildCommand` is present, the command runs it before packaging. It copies declared resources and writes packaged output to `bundle.outputDir`.
 
 ## Local Build
 
@@ -18,7 +18,7 @@ pnpm install
 uzumaki build
 ```
 
-Use this when you want the CLI to run your configured JavaScript build before packaging.
+Use this when you want the CLI to run your configured JavaScript build before packaging. Omit `beforeBuildCommand` when another tool already produces the JavaScript bundle.
 
 ## CI Build
 

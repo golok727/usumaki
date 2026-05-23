@@ -25,10 +25,6 @@ pub fn run_headless(startup_snapshot: Option<&'static [u8]>, app_config: AppConf
             args: config.args.clone(),
             headless: true,
             jsx_import_source: config.jsx_import_source.clone(),
-            // Snapshot embeds the uzumaki extension so the same op table
-            // must be present at runtime even though headless mode hides
-            // the `uzumaki` module from JS — leaving it out triggers a
-            // bounds error during op registration.
             extensions: vec![crate::uzumaki::init()],
             startup_snapshot,
         })?

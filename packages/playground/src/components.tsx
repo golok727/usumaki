@@ -39,13 +39,13 @@ export function ProgressBar({
   return (
     <view display="flex" flexDir="col" gap={5} w="full">
       <view display="flex" flexDir="row" items="center" justify="between">
-        <text fontSize={12} color={C.textMuted}>
+        <view fontSize={12} color={C.textMuted}>
           {label}
-        </text>
+        </view>
         {showPct && (
-          <text fontSize={12} fontWeight={700} color={color}>
+          <view fontSize={12} fontWeight={700} color={color}>
             {pct.toFixed(1)}%
-          </text>
+          </view>
         )}
       </view>
       <view w="full" h={5} bg={trackColor} rounded={4}>
@@ -79,15 +79,15 @@ export function StatCard({
       flexDir="col"
       gap={7}
     >
-      <text fontSize={10} fontWeight={700} color={C.textMuted}>
+      <view fontSize={10} fontWeight={700} color={C.textMuted}>
         {label.toUpperCase()}
-      </text>
-      <text fontSize={26} fontWeight={800} color={color}>
+      </view>
+      <view fontSize={26} fontWeight={800} color={color}>
         {value}
-      </text>
-      <text fontSize={11} color={C.textMuted}>
+      </view>
+      <view fontSize={11} color={C.textMuted}>
         {sub}
-      </text>
+      </view>
     </view>
   );
 }

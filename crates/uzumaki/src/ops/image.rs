@@ -5,10 +5,35 @@ use deno_error::JsErrorBox;
 use image::GenericImageView;
 
 use crate::{
-    app::{SharedAppState, with_state},
+    app::{SharedJsState, with_state},
     element::{ImageData, RasterImageData},
     node::UzNodeId,
 };
+
+/// Apply new image data to a node and adjust V8's external-memory accounting
+/// by the delta. Without this, swapping a 4MB raster onto a node would look
+/// free to the GC heuristic.
+fn apply_and_report(s: &mut crate::app::JsState, window_id: u32, nid: UzNodeId, image: ImageData) {
+    let Some(entry) = s.windows.get_mut(&window_id) else {
+        return;
+    };
+    let old = entry
+        .dom
+        .nodes
+        .get(nid)
+        .and_then(|n| n.as_image())
+        .map(|i| i.heap_bytes())
+        .unwrap_or(0);
+    entry.dom.set_image_data(nid, image);
+    let new = entry
+        .dom
+        .nodes
+        .get(nid)
+        .and_then(|n| n.as_image())
+        .map(|i| i.heap_bytes())
+        .unwrap_or(0);
+    s.external_memory_delta += new as i64 - old as i64;
+}
 
 fn window_not_found() -> JsErrorBox {
     JsErrorBox::new("WindowNotFound", "window not found")
@@ -57,25 +82,25 @@ pub fn op_set_encoded_image_data(
     #[buffer] data: JsBuffer,
 ) -> Result<(), JsErrorBox> {
     let nid = node_id as UzNodeId;
-    let app_state = state.borrow::<SharedAppState>().clone();
+    let js_state = state.borrow::<SharedJsState>().clone();
 
-    let cached = with_state(&app_state, |s| s.image_cache.get(&cache_key).cloned());
+    let cached = with_state(&js_state, |s| s.image_cache.get(&cache_key).cloned());
     let image = match cached {
         Some(img) => img,
         None => {
             let decoded = decode(&data)?;
-            with_state(&app_state, |s| {
+            with_state(&js_state, |s| {
                 s.image_cache.insert(cache_key.clone(), decoded.clone());
             });
             decoded
         }
     };
 
-    with_state(&app_state, |s| {
-        let Some(entry) = s.windows.get_mut(&window_id) else {
+    with_state(&js_state, |s| {
+        if !s.windows.contains_key(&window_id) {
             return Err(window_not_found());
-        };
-        entry.dom.set_image_data(nid, image);
+        }
+        apply_and_report(s, window_id, nid, image);
         Ok(())
     })
 }
@@ -88,17 +113,15 @@ pub fn op_apply_cached_image(
     #[string] cache_key: String,
 ) -> bool {
     let nid = node_id as UzNodeId;
-    let app_state = state.borrow::<SharedAppState>().clone();
+    let js_state = state.borrow::<SharedJsState>().clone();
 
-    let cached = with_state(&app_state, |s| s.image_cache.get(&cache_key).cloned());
+    let cached = with_state(&js_state, |s| s.image_cache.get(&cache_key).cloned());
     let Some(image) = cached else {
         return false;
     };
 
-    with_state(&app_state, |s| {
-        if let Some(entry) = s.windows.get_mut(&window_id) {
-            entry.dom.set_image_data(nid, image);
-        }
+    with_state(&js_state, |s| {
+        apply_and_report(s, window_id, nid, image);
     });
     true
 }
@@ -110,12 +133,12 @@ pub fn op_clear_image_data(
     #[smi] node_id: u32,
 ) -> Result<(), JsErrorBox> {
     let nid = node_id as UzNodeId;
-    let app_state = state.borrow::<SharedAppState>().clone();
-    with_state(&app_state, |s| {
-        let Some(entry) = s.windows.get_mut(&window_id) else {
+    let js_state = state.borrow::<SharedJsState>().clone();
+    with_state(&js_state, |s| {
+        if !s.windows.contains_key(&window_id) {
             return Err(window_not_found());
-        };
-        entry.dom.set_image_data(nid, ImageData::None);
+        }
+        apply_and_report(s, window_id, nid, ImageData::None);
         Ok(())
     })
 }
