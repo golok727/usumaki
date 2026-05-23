@@ -141,6 +141,12 @@ onAppEvent((event: AppEvent, ctx) => {
     return;
   }
 
+  if (event.type === 'themeChanged') {
+    const w = Window._getById(event.windowId);
+    if (w) w._onSystemThemeChange(event.theme === 'dark' ? 'dark' : 'light');
+    return;
+  }
+
   if (event.type === 'hotReload') {
     console.log('[uzumaki] Hot reload');
     return;
@@ -199,4 +205,5 @@ interface AppEvent {
   value?: string;
   inputType?: string;
   data?: string | null;
+  theme?: string;
 }

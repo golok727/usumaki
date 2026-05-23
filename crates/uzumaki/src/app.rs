@@ -156,7 +156,10 @@ impl Application {
         );
         self.winit_id_to_entry_id.insert(winit_id, id);
 
-        let _ = self.main_to_js.send(MainToJs::WindowCreated { id, shared });
+        let theme = winit_window.theme();
+        let _ = self
+            .main_to_js
+            .send(MainToJs::WindowCreated { id, shared, theme });
     }
 
     fn close_window(&mut self, event_loop: &ActiveEventLoop, id: WindowEntryId) {

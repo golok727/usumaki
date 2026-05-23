@@ -74,6 +74,13 @@ pub struct WindowLoadEventData {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ThemeChangedEventData {
+    pub window_id: u32,
+    pub theme: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ResizeEventData {
     pub window_id: u32,
     pub width: u32,
@@ -125,6 +132,8 @@ pub enum AppEvent {
     WindowLoad(WindowLoadEventData),
     #[serde(rename = "windowClose")]
     WindowClose(WindowLoadEventData),
+    #[serde(rename = "themeChanged")]
+    ThemeChanged(ThemeChangedEventData),
     HotReload,
 }
 

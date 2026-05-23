@@ -1,7 +1,8 @@
 import { useId, useState } from 'react';
-import { UzElement } from 'uzumaki';
-import { C, type ThemeName } from './theme';
-import { useTheme, setTheme } from './useTheme';
+import { UzElement, type WindowTheme } from 'uzumaki';
+import { useWindow } from 'uzumaki-react';
+import { C } from './theme';
+import { setTheme } from './useTheme';
 
 function ModalCounter() {
   const [count, setCount] = useState(0);
@@ -46,14 +47,16 @@ function ModalCounter() {
   );
 }
 
-const THEME_OPTIONS: { label: string; value: ThemeName }[] = [
+const THEME_OPTIONS: { label: string; value: WindowTheme }[] = [
+  { label: 'System', value: 'system' },
   { label: 'Dark', value: 'dark' },
   { label: 'Light', value: 'light' },
 ];
 
 export function Modal({ onClose }: { onClose: () => void }) {
   const modalId = useId();
-  const theme = useTheme();
+  const window = useWindow();
+  const [preference, setPreference] = useState<WindowTheme>(window.theme);
   return (
     <view
       id={modalId}
@@ -102,11 +105,14 @@ export function Modal({ onClose }: { onClose: () => void }) {
             </text>
             <view display="flex" flexDir="row" gap={8}>
               {THEME_OPTIONS.map(({ label, value }) => {
-                const selected = theme === value;
+                const selected = preference === value;
                 return (
                   <view
                     key={value}
-                    onClick={() => setTheme(value)}
+                    onClick={() => {
+                      setTheme(window, value);
+                      setPreference(value);
+                    }}
                     px={14}
                     py={7}
                     bg={selected ? C.accentDim : C.surface3}

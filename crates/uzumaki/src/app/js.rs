@@ -464,15 +464,32 @@ fn handle_message(
     animation_frame_fn: &v8::Global<v8::Function>,
 ) -> bool {
     match msg {
-        MainToJs::WindowCreated { id, shared } => {
+        MainToJs::WindowCreated { id, shared, theme } => {
             let proxy = with_state_ref(state, |s| s.proxy.clone());
             let window = window::Window::new(shared, proxy);
             with_state(state, |s| {
                 if let Some(entry) = s.windows.get_mut(&id) {
                     entry.window = Some(window);
+                    if let Some(theme) = theme {
+                        entry.state.theme = Some(theme);
+                    }
                 }
             });
             refresh_cursor_blink_timer(state, id);
+            if let Some(theme) = theme {
+                let theme = match theme {
+                    Theme::Dark => "dark",
+                    Theme::Light => "light",
+                };
+                dispatch_event_to_js(
+                    worker,
+                    dispatch_fn,
+                    &AppEvent::ThemeChanged(event_dispatch::ThemeChangedEventData {
+                        window_id: id,
+                        theme: theme.to_string(),
+                    }),
+                );
+            }
             dispatch_event_to_js(
                 worker,
                 dispatch_fn,
@@ -903,6 +920,18 @@ fn handle_window_event(
                     entry.state.theme = Some(theme);
                 }
             });
+            let theme = match theme {
+                Theme::Dark => "dark",
+                Theme::Light => "light",
+            };
+            dispatch_event_to_js(
+                worker,
+                dispatch_fn,
+                &AppEvent::ThemeChanged(event_dispatch::ThemeChangedEventData {
+                    window_id: wid,
+                    theme: theme.to_string(),
+                }),
+            );
         }
         WindowEvent::Ime(ime) => match ime {
             Ime::Commit(text) => {

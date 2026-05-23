@@ -11,6 +11,7 @@ export interface WindowSize {
 }
 
 export type WindowTheme = 'light' | 'dark' | 'system';
+export type ResolvedTheme = 'light' | 'dark';
 export type WindowLevel = 'normal' | 'alwaysOnTop' | 'alwaysOnBottom';
 
 export interface WindowOptions {

@@ -5,6 +5,7 @@ import type {
   WindowPosition,
   WindowSize,
   WindowTheme,
+  ResolvedTheme,
 } from 'ext:uzumaki/types.ts';
 import { UzTextNode } from 'ext:uzumaki/node.ts';
 import { Element } from 'ext:uzumaki/elements/element.ts';
@@ -34,7 +35,7 @@ const DEFAULT_WINDOW_WIDTH = 800;
 const DEFAULT_WINDOW_HEIGHT = 600;
 const DEFAULT_WINDOW_TITLE = 'uzumaki';
 const DEFAULT_WINDOW_LEVEL: WindowLevel = 'normal';
-const DEFAULT_WINDOW_THEME: WindowTheme | null = null;
+const DEFAULT_THEME_PREFERENCE: WindowTheme = 'system';
 
 type AnimationFrameCallback = (timestamp: number) => void;
 
@@ -74,6 +75,8 @@ export class Window {
   private _nextAnimationFrameHandle: number = 1;
   private _animationFrameCallbacks = new Map<number, AnimationFrameCallback>();
   private _animationFramePendingNotified: boolean = false;
+  private _themePreference: WindowTheme = DEFAULT_THEME_PREFERENCE;
+  private _systemTheme: ResolvedTheme = 'light';
   /** @internal Used by the dispatcher and runtime glue. */
   readonly _emitter: UzEventTarget<WindowEventMap> = new UzEventTarget();
 
@@ -88,6 +91,11 @@ export class Window {
     this._label = label;
     this._native = core.createWindow(createOptions);
     this._id = this._native.id;
+    this._themePreference = createOptions.theme ?? DEFAULT_THEME_PREFERENCE;
+    const nativeTheme = this._native.theme;
+    if (nativeTheme === 'dark' || nativeTheme === 'light') {
+      this._systemTheme = nativeTheme;
+    }
 
     if (vars) {
       for (const [key, value] of Object.entries(vars)) {
@@ -171,8 +179,11 @@ export class Window {
     this._native.setPosition(x, y);
   }
 
-  set theme(theme: WindowTheme) {
-    this._native.theme = theme;
+  set theme(preference: WindowTheme) {
+    const prev = this.resolvedTheme;
+    this._themePreference = preference;
+    this._native.theme = preference;
+    this._maybeEmitThemeChange(prev);
   }
 
   focus(): void {
@@ -296,8 +307,18 @@ export class Window {
     return this._native.position;
   }
 
-  get theme(): WindowTheme | null {
-    return this._native.theme ?? DEFAULT_WINDOW_THEME;
+  get theme(): WindowTheme {
+    return this._themePreference;
+  }
+
+  /**
+   * The effective theme after resolving a `system` preference against the OS.
+   * Always `light` or `dark`. Track changes with the `themechange` event.
+   */
+  get resolvedTheme(): ResolvedTheme {
+    return this._themePreference === 'system'
+      ? this._systemTheme
+      : this._themePreference;
   }
 
   get active(): boolean | null {
@@ -386,6 +407,23 @@ export class Window {
     const event = buildLifecycleEvent(name, payload);
     this._emitter.emit(name, event as any);
     return event.defaultPrevented;
+  }
+
+  /** @internal Apply an OS theme change forwarded from the native layer. */
+  _onSystemThemeChange(osTheme: ResolvedTheme): void {
+    const prev = this.resolvedTheme;
+    this._systemTheme = osTheme;
+    this._maybeEmitThemeChange(prev);
+  }
+
+  private _maybeEmitThemeChange(prevResolved: ResolvedTheme): void {
+    const resolved = this.resolvedTheme;
+    if (resolved === prevResolved) return;
+    const event = buildLifecycleEvent('themechange', {
+      theme: resolved,
+      preference: this._themePreference,
+    });
+    this._emitter.emit('themechange', event as any);
   }
 
   /** @internal */
