@@ -1,148 +1,11 @@
-use serde_json::Value;
-
-use crate::app::JsWindow;
 use crate::cursor::UzCursorIcon;
 use crate::interactivity::StyleSlot;
-use crate::node::{Node, UzNodeId, VarBinding};
-use crate::prop_keys::{AttrValue, AttributeKind, StyleProp};
+use crate::node::{Node, UzNodeId};
+use crate::prop_keys::{AttrValue, StyleProp};
 use crate::style::*;
 use crate::ui::UIState;
 
-/// Prefix that marks an attribute value as a window var reference.
-const VAR_PREFIX: &str = "$";
-
-impl JsWindow {
-    pub(crate) fn set_attribute(&mut self, node_id: UzNodeId, name: &str, value: &str) {
-        // Drop any prior binding for this attr — a plain value overwrites a
-        // var reference and vice versa.
-        if let Some(node) = self.dom.nodes.get_mut(node_id) {
-            node.var_bindings.retain(|b| b.attr_name != name);
-        }
-
-        if let Some(var_name) = value.strip_prefix(VAR_PREFIX) {
-            if let Some(node) = self.dom.nodes.get_mut(node_id) {
-                node.var_bindings.push(VarBinding {
-                    attr_name: name.to_string(),
-                    var_name: var_name.to_string(),
-                });
-            }
-            let Some(resolved) = self.vars.get(var_name).cloned() else {
-                // Unknown var — leave the prior style as-is; the binding will
-                // pick up the real value once `set_var` defines it.
-                return;
-            };
-            self.apply_attribute(node_id, name, &resolved);
-            return;
-        }
-
-        self.apply_attribute(node_id, name, value);
-    }
-
-    fn apply_attribute(&mut self, node_id: UzNodeId, name: &str, value: &str) {
-        let kind = AttributeKind::parse(name);
-        match kind {
-            AttributeKind::Element(name) => {
-                if let Some(node) = self.dom.nodes.get_mut(node_id)
-                    && let Some(el) = node.as_element_mut()
-                {
-                    el.set_attr(name, AttrValue::from(value));
-                }
-            }
-            AttributeKind::Style(prop, variant) => {
-                set_node_style(
-                    &mut self.dom,
-                    node_id,
-                    prop,
-                    variant,
-                    AttrValue::from(value),
-                    self.rem_base,
-                );
-            }
-        };
-    }
-
-    pub fn clear_attribute(&mut self, node_id: UzNodeId, name: &str) {
-        if let Some(node) = self.dom.nodes.get_mut(node_id) {
-            node.var_bindings.retain(|b| b.attr_name != name);
-        }
-        let kind = AttributeKind::parse(name);
-        let Some(node) = self.dom.nodes.get_mut(node_id) else {
-            return;
-        };
-
-        match kind {
-            AttributeKind::Element(name) => {
-                if let Some(el) = node.as_element_mut() {
-                    el.clear_attr(name);
-                }
-            }
-            AttributeKind::Style(prop, variant) => {
-                clear_node_style(&mut self.dom, node_id, prop, variant)
-            }
-        };
-    }
-
-    /// Set or remove a single window variable, then re-apply every attribute
-    /// bound to it. `None` removes the var; the bound attrs are cleared back
-    /// to their defaults.
-    pub fn set_var(&mut self, key: &str, value: Option<String>) {
-        match value {
-            Some(v) => {
-                self.vars.insert(key.to_string(), v);
-            }
-            None => {
-                self.vars.remove(key);
-            }
-        }
-
-        let affected: Vec<(UzNodeId, String)> = self
-            .dom
-            .nodes
-            .iter()
-            .flat_map(|(id, node)| {
-                node.var_bindings
-                    .iter()
-                    .filter(|b| b.var_name == key)
-                    .map(move |b| (id, b.attr_name.clone()))
-            })
-            .collect();
-
-        let resolved = self.vars.get(key).cloned();
-        for (nid, attr) in affected {
-            match &resolved {
-                Some(v) => self.apply_attribute(nid, &attr, v),
-                None => {
-                    let kind = AttributeKind::parse(&attr);
-                    if let AttributeKind::Style(prop, variant) = kind {
-                        clear_node_style(&mut self.dom, nid, prop, variant);
-                    }
-                }
-            }
-        }
-    }
-
-    pub fn get_attribute(&self, node_id: UzNodeId, name: &str) -> Value {
-        let kind = AttributeKind::parse(name);
-
-        let Some(node) = self.dom.nodes.get(node_id) else {
-            return Value::Null;
-        };
-
-        match kind {
-            AttributeKind::Element(name) => node
-                .as_element()
-                .and_then(|el| el.get_attr(name))
-                .unwrap_or(Value::Null),
-            AttributeKind::Style(_, _variant) => Value::Null, // todo computed styls ?
-        }
-    }
-
-    pub fn set_cursor(&mut self, _node_id: UzNodeId, _icon: UzCursorIcon) {
-        todo!()
-    }
-}
-
-fn set_node_style(
+pub(crate) fn set_node_style(
     dom: &mut UIState,
     node_id: UzNodeId,
     prop: StyleProp,
@@ -428,7 +291,12 @@ fn set_node_style(
     }
 }
 
-fn clear_node_style(dom: &mut UIState, node_id: UzNodeId, prop: StyleProp, variant: StyleSlot) {
+pub(crate) fn clear_node_style(
+    dom: &mut UIState,
+    node_id: UzNodeId,
+    prop: StyleProp,
+    variant: StyleSlot,
+) {
     let Some(node) = dom.nodes.get_mut(node_id) else {
         return;
     };

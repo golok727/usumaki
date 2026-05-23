@@ -1,7 +1,7 @@
 pub mod dom;
 pub mod image;
 pub mod path;
-mod style_util;
+pub(crate) mod style_util;
 pub mod window;
 
 pub use dom::*;

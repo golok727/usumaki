@@ -20,7 +20,7 @@ export function App() {
     };
     frame = window.requestAnimationFrame(tick);
     return () => window.cancelAnimationFrame(frame);
-  }, []);
+  }, [window]);
 
   const toggleTheme = () => {
     const next: ThemeName = theme === 'dark' ? 'light' : 'dark';
