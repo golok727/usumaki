@@ -74,6 +74,13 @@ pub struct WindowLoadEventData {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ThemeChangedEventData {
+    pub window_id: u32,
+    pub theme: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ResizeEventData {
     pub window_id: u32,
     pub width: u32,
@@ -125,6 +132,8 @@ pub enum AppEvent {
     WindowLoad(WindowLoadEventData),
     #[serde(rename = "windowClose")]
     WindowClose(WindowLoadEventData),
+    #[serde(rename = "themeChanged")]
+    ThemeChanged(ThemeChangedEventData),
     HotReload,
 }
 
@@ -1781,7 +1790,7 @@ fn apply_wheel_axis(dom: &mut UIState, mx: f64, my: f64, axis: ScrollAxis, delta
         // While the wheel is locked to a previously-captured node, refuse
         // to chain into ancestors even if the captured node is saturated.
         // The user must pause wheeling for SCROLL_LOCK_TIMEOUT before the
-        // parent can take over — matches browser overscroll behaviour.
+        // parent can take over
         if locked_to_target {
             capture_node = Some(nid);
             break;

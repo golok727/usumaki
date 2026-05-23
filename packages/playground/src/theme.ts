@@ -1,4 +1,6 @@
-export const C = {
+import { defineVars } from 'uzumaki';
+
+const dark = {
   bg: '#0a0a0a',
   surface: '#0f0f14',
   surface2: '#141418',
@@ -37,6 +39,53 @@ export const C = {
   textMuted: '#84848e',
   textDim: '#66666f',
 };
+
+const light: typeof dark = {
+  bg: '#fafafa',
+  surface: '#ffffff',
+  surface2: '#f4f4f5',
+  surface3: '#e4e4e7',
+  surface4: '#d4d4d8',
+  border: '#d4d4d8',
+  borderHi: '#a1a1aa',
+
+  accent: '#f59e0b',
+  accentHi: '#c2410c',
+  accentDim: '#fed7aa',
+  accentDark: '#fef3c7',
+
+  primary: '#f59e0b',
+  primaryHi: '#c2410c',
+  primaryDim: '#fed7aa',
+  primaryDark: '#fef3c7',
+
+  success: '#22c55e',
+  successHi: '#15803d',
+  successDim: '#bbf7d0',
+  successDark: '#dcfce7',
+
+  warning: '#eab308',
+  warningHi: '#a16207',
+  warningDim: '#fef08a',
+  warningDark: '#fef9c3',
+
+  danger: '#ef4444',
+  dangerHi: '#991b1b',
+  dangerDim: '#fecaca',
+  dangerDark: '#fee2e2',
+
+  text: '#18181b',
+  textSub: '#3f3f46',
+  textMuted: '#52525b',
+  textDim: '#71717a',
+};
+
+const { vars: darkVars, theme } = defineVars(dark);
+const { vars: lightVars } = defineVars(light);
+
+export const C = theme;
+export const themes = { dark: darkVars, light: lightVars };
+export type ThemeName = keyof typeof themes;
 
 export function lerp(a: number, b: number, t: number) {
   return a + (b - a) * t;

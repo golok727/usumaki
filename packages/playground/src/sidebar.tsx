@@ -106,7 +106,7 @@ export function Sidebar({
           <Icon name="square-stack" color={C.accentHi} size={16} />
 
           <text fontSize={13} fontWeight={700} color={C.accentHi}>
-            Open Modal
+            Settings
           </text>
         </button>
         <button

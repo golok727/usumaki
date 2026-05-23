@@ -15,10 +15,9 @@ pub struct ImageRenderInfo {
 }
 
 const FALLBACK_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-<rect width="64" height="64" rx="6" fill="#2a2a2e"/>
-<rect x="6" y="10" width="52" height="44" rx="4" fill="none" stroke="#6a6a72" stroke-width="2"/>
-<circle cx="22" cy="24" r="4" fill="#6a6a72"/>
-<path d="M10 48 L26 30 L36 40 L44 32 L56 46" fill="none" stroke="#6a6a72" stroke-width="2.5" stroke-linejoin="round"/>
+<rect x="6" y="10" width="52" height="44" rx="4" fill="none" stroke="#808080" stroke-width="1"/>
+<circle cx="22" cy="24" r="4" fill="none" stroke="#808080" stroke-width="1"/>
+<path d="M10 48 L26 30 L36 40 L44 32 L56 46" fill="none" stroke="#808080" stroke-width="1.25" stroke-linejoin="round"/>
 </svg>"##;
 
 fn fallback_tree() -> &'static Arc<usvg::Tree> {

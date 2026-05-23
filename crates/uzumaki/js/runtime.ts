@@ -141,6 +141,12 @@ onAppEvent((event: AppEvent, ctx) => {
     return;
   }
 
+  if (event.type === 'themeChanged') {
+    const w = Window._getById(event.windowId);
+    if (w) w._onSystemThemeChange(event.theme === 'dark' ? 'dark' : 'light');
+    return;
+  }
+
   if (event.type === 'hotReload') {
     console.log('[uzumaki] Hot reload');
     return;
@@ -155,6 +161,27 @@ onAppEvent((event: AppEvent, ctx) => {
   const prevented = dispatchDomEvent(w, eventType, event.nodeId ?? null, event);
   if (prevented) ctx.preventDefault();
 });
+
+/**
+ * Build a theme ref object from a map of tokens.
+ *
+ * Returns `{ vars, theme }`. Pass `vars` to a window's `vars` option (or
+ * `window.setVars(...)`); use `theme.token` anywhere a style prop value is
+ * expected. Values that start with `$` are looked up from the window's
+ * theme at paint time.
+ *
+ * @example
+ * const { vars, theme } = defineVars({ bg: '#0a0a0a', text: '#e4e4e7' });
+ * new Window('main', { vars, rootStyles: { bg: theme.bg, color: theme.text } });
+ */
+export function defineVars<T extends Record<string, string>>(
+  tokens: T,
+): { vars: T; theme: { [K in keyof T]: string } } {
+  const theme = Object.fromEntries(
+    Object.keys(tokens).map((k) => [k, `$${k}`]),
+  ) as { [K in keyof T]: string };
+  return { vars: tokens, theme };
+}
 
 export const RUNTIME_VERSION: number = op_get_uz_runtime_version();
 
@@ -178,4 +205,5 @@ interface AppEvent {
   value?: string;
   inputType?: string;
   data?: string | null;
+  theme?: string;
 }

@@ -3,6 +3,7 @@ import { App } from './app';
 // import { RUNTIME_VERSION } from 'uzumaki';
 import { Window } from 'uzumaki';
 import { C } from './theme';
+import { installThemeVars } from './useTheme';
 
 // console.log('Uzumaki Version:', RUNTIME_VERSION);
 
@@ -16,6 +17,8 @@ export const window = new Window('main', {
     fontSize: 14,
   },
 });
+
+installThemeVars(window);
 
 window.on('load', () => {
   console.log(

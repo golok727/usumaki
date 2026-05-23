@@ -36,17 +36,17 @@ export function TemplateApp() {
         <image rotate={spin} src={reactLogo} w={128} h={116} />
       </view>
       <view display="flex" flexDir="row" items="center" gap={20}>
-        <view fontSize={34} fontWeight={700} color="#e2a52e">
+        <view fontSize={34} fontWeight={700} color={C.accent}>
           Uzumaki
         </view>
-        <view fontSize={30} fontWeight={700} color="#71717a">
+        <view fontSize={30} fontWeight={700} color={C.textDim}>
           💖
         </view>
         <view fontSize={34} fontWeight={700} color="#61dafb">
           React
         </view>
       </view>
-      <text fontSize={18} color="#a1a1aa">
+      <text fontSize={18} color={C.textSub}>
         Count: {count}
       </text>
       <button

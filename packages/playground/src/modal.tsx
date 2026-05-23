@@ -1,6 +1,8 @@
 import { useId, useState } from 'react';
-import { UzElement } from 'uzumaki';
+import { UzElement, type WindowTheme } from 'uzumaki';
+import { useWindow } from 'uzumaki-react';
 import { C } from './theme';
+import { setTheme } from './useTheme';
 
 function ModalCounter() {
   const [count, setCount] = useState(0);
@@ -45,8 +47,16 @@ function ModalCounter() {
   );
 }
 
+const THEME_OPTIONS: { label: string; value: WindowTheme }[] = [
+  { label: 'System', value: 'system' },
+  { label: 'Dark', value: 'dark' },
+  { label: 'Light', value: 'light' },
+];
+
 export function Modal({ onClose }: { onClose: () => void }) {
   const modalId = useId();
+  const window = useWindow();
+  const [preference, setPreference] = useState<WindowTheme>(window.theme);
   return (
     <view
       id={modalId}
@@ -86,22 +96,6 @@ export function Modal({ onClose }: { onClose: () => void }) {
           <text fontSize={16} fontWeight={800} color={C.text}>
             Settings
           </text>
-          <button
-            onClick={onClose}
-            w={28}
-            h={28}
-            bg={C.surface3}
-            hover:bg={C.surface4}
-            rounded={6}
-            display="flex"
-            items="center"
-            justify="center"
-            cursor="pointer"
-          >
-            <text fontSize={14} color={C.textMuted}>
-              x
-            </text>
-          </button>
         </view>
 
         <view px={24} py={20} display="flex" flexDir="col" gap={18}>
@@ -110,27 +104,34 @@ export function Modal({ onClose }: { onClose: () => void }) {
               Theme
             </text>
             <view display="flex" flexDir="row" gap={8}>
-              {['Dark', 'Light', 'System'].map((t) => (
-                <view
-                  key={t}
-                  px={14}
-                  py={7}
-                  bg={t === 'Dark' ? C.accentDim : C.surface3}
-                  hover:bg={t === 'Dark' ? C.accent : C.surface4}
-                  rounded={6}
-                  cursor="pointer"
-                  border={1}
-                  borderColor={t === 'Dark' ? C.accent : C.border}
-                >
-                  <text
-                    fontSize={12}
-                    fontWeight={t === 'Dark' ? '700' : '400'}
-                    color={t === 'Dark' ? C.accentHi : C.textSub}
+              {THEME_OPTIONS.map(({ label, value }) => {
+                const selected = preference === value;
+                return (
+                  <view
+                    key={value}
+                    onClick={() => {
+                      setTheme(window, value);
+                      setPreference(value);
+                    }}
+                    px={14}
+                    py={7}
+                    bg={selected ? C.accentDim : C.surface3}
+                    hover:bg={selected ? C.accent : C.surface4}
+                    rounded={6}
+                    cursor="pointer"
+                    border={1}
+                    borderColor={selected ? C.accent : C.border}
                   >
-                    {t}
-                  </text>
-                </view>
-              ))}
+                    <text
+                      fontSize={12}
+                      fontWeight={selected ? '700' : '400'}
+                      color={selected ? C.accentHi : C.textSub}
+                    >
+                      {label}
+                    </text>
+                  </view>
+                );
+              })}
             </view>
           </view>
 
@@ -163,19 +164,6 @@ export function Modal({ onClose }: { onClose: () => void }) {
           >
             <text fontSize={13} fontWeight={600} color={C.textSub}>
               Close
-            </text>
-          </button>
-          <button
-            onClick={onClose}
-            px={16}
-            py={8}
-            bg={C.accent}
-            hover:bg={C.accentDim}
-            rounded={8}
-            cursor="pointer"
-          >
-            <text fontSize={13} fontWeight={600} color="#000">
-              Save
             </text>
           </button>
         </view>

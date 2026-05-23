@@ -804,6 +804,27 @@ impl CoreWindow {
         self.toggle_button(state, WindowButtons::MAXIMIZE, maximizable)
     }
 
+    /// Set or remove a window var. `value = None` removes it; bound attrs
+    /// fall back to their defaults. Triggers a redraw if anything changed.
+    pub fn setVar(
+        &self,
+        state: &OpState,
+        #[string] key: &str,
+        #[string] value: Option<String>,
+    ) -> bool {
+        let js_state = state.borrow::<SharedJsState>().clone();
+        with_state(&js_state, |s| {
+            let Some(entry) = s.windows.get_mut(&self.id) else {
+                return false;
+            };
+            entry.set_var(key, value);
+            if let Some(window) = entry.window.as_ref() {
+                window.request_redraw();
+            }
+            true
+        })
+    }
+
     #[getter]
     pub fn remBase(&self, state: &OpState) -> f32 {
         self.with_entry(state, |entry| entry.rem_base)

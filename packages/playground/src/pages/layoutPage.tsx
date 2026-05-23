@@ -300,21 +300,17 @@ function AbsolutePositioningDemo() {
       <view display="flex" flexDir="row" gap={12}>
         {(
           [
-            { label: 'top + left', pos: { top: 8, left: 8 }, c: C.accentDim },
-            {
-              label: 'top + right',
-              pos: { top: 8, right: 8 },
-              c: C.primaryDim,
-            },
+            { label: 'top + left', pos: { top: 8, left: 8 }, c: C.accent },
+            { label: 'top + right', pos: { top: 8, right: 8 }, c: C.primary },
             {
               label: 'bottom + right',
               pos: { bottom: 8, right: 8 },
-              c: C.successDim,
+              c: C.success,
             },
             {
               label: 'bottom + left',
               pos: { bottom: 8, left: 8 },
-              c: C.warningDim,
+              c: C.warning,
             },
           ] as const
         ).map(({ label, pos, c }) => (
@@ -378,7 +374,7 @@ function AbsolutePositioningDemo() {
           items="center"
           justify="center"
         >
-          <AbsClickCounter color={C.accentDim} />
+          <AbsClickCounter color={C.accent} />
         </view>
       </view>
     </view>
@@ -437,11 +433,9 @@ export function LayoutPage() {
                 border={1}
                 borderColor={C.border}
               >
-                {[C.accentHi, C.primaryHi, C.successHi, C.warningHi].map(
-                  (c, i) => (
-                    <view key={i} w={36} h={36} bg={c} rounded={4} />
-                  ),
-                )}
+                {[C.accent, C.primary, C.success, C.warning].map((c, i) => (
+                  <view key={i} w={36} h={36} bg={c} rounded={4} />
+                ))}
               </view>
             </view>
           ))}
@@ -473,15 +467,15 @@ export function LayoutPage() {
                 >
                   {a === 'stretch' ? (
                     <>
-                      <view w={24} bg={C.accentHi} rounded={4} />
-                      <view w={24} bg={C.primaryHi} rounded={4} />
-                      <view w={24} bg={C.successHi} rounded={4} />
+                      <view w={24} bg={C.accent} rounded={4} />
+                      <view w={24} bg={C.primary} rounded={4} />
+                      <view w={24} bg={C.success} rounded={4} />
                     </>
                   ) : (
                     <>
-                      <view w={24} h={24} bg={C.accentHi} rounded={4} />
-                      <view w={24} h={36} bg={C.primaryHi} rounded={4} />
-                      <view w={24} h={16} bg={C.successHi} rounded={4} />
+                      <view w={24} h={24} bg={C.accent} rounded={4} />
+                      <view w={24} h={36} bg={C.primary} rounded={4} />
+                      <view w={24} h={16} bg={C.success} rounded={4} />
                     </>
                   )}
                 </view>
@@ -756,15 +750,7 @@ export function LayoutPage() {
                 key={l}
                 flex={1}
                 p={padding}
-                bg={
-                  [
-                    C.accentDim,
-                    C.primaryDim,
-                    C.successDim,
-                    '#422006',
-                    C.dangerDim,
-                  ][i]
-                }
+                bg={[C.accent, C.primary, C.success, C.warning, C.danger][i]}
                 rounded={8}
                 display="flex"
                 items="center"
@@ -1370,7 +1356,7 @@ function ScrollDemo() {
                 w={140}
                 h={80}
                 textWrap="nowrap"
-                bg={i % 2 === 0 ? C.primaryDim : C.accentDim}
+                bg={i % 2 === 0 ? C.primary : C.accent}
                 rounded={8}
                 p={10}
                 display="flex"
@@ -1428,7 +1414,7 @@ function ScrollDemo() {
               <view
                 key={i}
                 p={12}
-                bg={i % 2 === 0 ? C.successDim : C.warningDim}
+                bg={i % 2 === 0 ? C.success : C.warning}
                 rounded={8}
                 display="flex"
                 flexDir="col"

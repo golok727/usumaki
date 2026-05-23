@@ -9,7 +9,7 @@
   },
   "dependencies": {
     "uzumaki-react": "^0.0.1-alpha.3",
-    "react": "^19.2.4"
+    "react": "^19.2.6"
   },
   "devDependencies": {
     "uzumaki-types": "^0.0.1-alpha.3",

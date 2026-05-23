@@ -11,6 +11,7 @@ export interface WindowSize {
 }
 
 export type WindowTheme = 'light' | 'dark' | 'system';
+export type ResolvedTheme = 'light' | 'dark';
 export type WindowLevel = 'normal' | 'alwaysOnTop' | 'alwaysOnBottom';
 
 export interface WindowOptions {
@@ -37,6 +38,7 @@ export interface WindowOptions {
   minimizable?: boolean;
   maximizable?: boolean;
   rootStyles?: Record<string, string | number | boolean>;
+  vars?: Record<string, string>;
 }
 
 export interface ListenerEntry {

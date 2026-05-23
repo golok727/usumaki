@@ -201,6 +201,7 @@ pub enum MainToJs {
     WindowCreated {
         id: WindowEntryId,
         shared: Arc<WindowShared>,
+        theme: Option<winit::window::Theme>,
     },
     WindowEvent {
         id: WindowEntryId,

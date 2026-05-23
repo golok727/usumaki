@@ -70,6 +70,8 @@ export interface CoreWindow {
   maximizable: boolean | null;
 
   remBase: number;
+
+  setVar(key: string, value: string | null): boolean;
 }
 
 export interface CoreNodeConstructor {

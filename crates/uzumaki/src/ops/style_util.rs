@@ -1,77 +1,11 @@
-use serde_json::Value;
-
-use crate::app::JsWindow;
 use crate::cursor::UzCursorIcon;
 use crate::interactivity::StyleSlot;
 use crate::node::{Node, UzNodeId};
-use crate::prop_keys::{AttrValue, AttributeKind, StyleProp};
+use crate::prop_keys::{AttrValue, StyleProp};
 use crate::style::*;
 use crate::ui::UIState;
 
-impl JsWindow {
-    pub(crate) fn set_attribute<'a>(
-        &mut self,
-        node_id: UzNodeId,
-        name: &str,
-        value: impl Into<AttrValue<'a>>,
-    ) {
-        let value = value.into();
-        let kind = AttributeKind::parse(name);
-
-        match kind {
-            AttributeKind::Element(name) => {
-                if let Some(node) = self.dom.nodes.get_mut(node_id)
-                    && let Some(el) = node.as_element_mut()
-                {
-                    el.set_attr(name, value);
-                }
-            }
-            AttributeKind::Style(prop, variant) => {
-                set_node_style(&mut self.dom, node_id, prop, variant, value, self.rem_base);
-            }
-        };
-    }
-
-    pub fn clear_attribute(&mut self, node_id: UzNodeId, name: &str) {
-        let kind = AttributeKind::parse(name);
-        let Some(node) = self.dom.nodes.get_mut(node_id) else {
-            return;
-        };
-
-        match kind {
-            AttributeKind::Element(name) => {
-                if let Some(el) = node.as_element_mut() {
-                    el.clear_attr(name);
-                }
-            }
-            AttributeKind::Style(prop, variant) => {
-                clear_node_style(&mut self.dom, node_id, prop, variant)
-            }
-        };
-    }
-
-    pub fn get_attribute(&self, node_id: UzNodeId, name: &str) -> Value {
-        let kind = AttributeKind::parse(name);
-
-        let Some(node) = self.dom.nodes.get(node_id) else {
-            return Value::Null;
-        };
-
-        match kind {
-            AttributeKind::Element(name) => node
-                .as_element()
-                .and_then(|el| el.get_attr(name))
-                .unwrap_or(Value::Null),
-            AttributeKind::Style(_, _variant) => Value::Null, // todo computed styls ?
-        }
-    }
-
-    pub fn set_cursor(&mut self, _node_id: UzNodeId, _icon: UzCursorIcon) {
-        todo!()
-    }
-}
-
-fn set_node_style(
+pub(crate) fn set_node_style(
     dom: &mut UIState,
     node_id: UzNodeId,
     prop: StyleProp,
@@ -357,7 +291,12 @@ fn set_node_style(
     }
 }
 
-fn clear_node_style(dom: &mut UIState, node_id: UzNodeId, prop: StyleProp, variant: StyleSlot) {
+pub(crate) fn clear_node_style(
+    dom: &mut UIState,
+    node_id: UzNodeId,
+    prop: StyleProp,
+    variant: StyleSlot,
+) {
     let Some(node) = dom.nodes.get_mut(node_id) else {
         return;
     };

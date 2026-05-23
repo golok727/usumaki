@@ -11,8 +11,8 @@ const SELECTION_COLOR: VelloColor = VelloColor::from_rgba8(56, 121, 185, 128);
 const PLACEHOLDER_COLOR: VelloColor = VelloColor::from_rgba8(128, 128, 128, 255);
 const PREEDIT_BG_COLOR: VelloColor = VelloColor::from_rgba8(50, 50, 60, 180);
 const PREEDIT_UNDERLINE_COLOR: VelloColor = VelloColor::from_rgba8(180, 180, 180, 255);
-const CARET_COLOR: VelloColor = VelloColor::from_rgba8(212, 212, 212, 255);
-const CARET_WIDTH: f64 = 1.5;
+const CARET_COLOR: VelloColor = VelloColor::from_rgba8(115, 115, 115, 255);
+const CARET_WIDTH: f64 = 2.0;
 
 pub struct InputRenderInfo {
     pub display_text: String,

@@ -460,9 +460,9 @@ impl Default for ScrollbarStyle {
     fn default() -> Self {
         Self {
             width: 8.0,
-            color: Color::rgba(255, 255, 255, 90),
-            hover_color: Color::rgba(255, 255, 255, 140),
-            active_color: Color::rgba(255, 255, 255, 180),
+            color: Color::rgba(128, 128, 128, 110),
+            hover_color: Color::rgba(128, 128, 128, 160),
+            active_color: Color::rgba(128, 128, 128, 200),
             radius: None,
             mode: ScrollbarMode::Overlay,
         }

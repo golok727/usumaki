@@ -15,6 +15,7 @@ declare module 'uzumaki' {
     height: number;
   }
   type WindowTheme = 'light' | 'dark' | 'system';
+  type ResolvedTheme = 'light' | 'dark';
   type WindowLevel = 'normal' | 'alwaysOnTop' | 'alwaysOnBottom';
   interface WindowOptions {
     width?: number;
@@ -40,6 +41,7 @@ declare module 'uzumaki' {
     minimizable?: boolean;
     maximizable?: boolean;
     rootStyles?: Record<string, string | number | boolean>;
+    vars?: Record<string, string>;
   }
   interface AppPath {
     readonly resourceDir: string;
@@ -198,6 +200,14 @@ declare module 'uzumaki' {
     readonly width: number;
     readonly height: number;
   }
+  interface UzThemeChangeEvent<
+    T extends UzNode = UzNode,
+  > extends UzumakiEvent<T> {
+    /** The effective theme after resolving `system` against the OS. */
+    readonly theme: ResolvedTheme;
+    /** The window's theme preference that produced `theme`. */
+    readonly preference: WindowTheme;
+  }
   /** DOM-style events that can be attached to any element. */
   interface UzEventMap {
     mousemove: UzMouseEvent;
@@ -219,6 +229,7 @@ declare module 'uzumaki' {
     load: UzumakiEvent;
     close: UzumakiEvent;
     resize: UzumakiResizeEvent;
+    themechange: UzThemeChangeEvent;
   }
   type EventName = keyof UzEventMap;
   type WindowEventName = keyof WindowEventMap;
@@ -389,6 +400,8 @@ declare module 'uzumaki' {
     private _nextAnimationFrameHandle;
     private _animationFrameCallbacks;
     private _animationFramePendingNotified;
+    private _themePreference;
+    private _systemTheme;
     constructor(label: string, attributes?: WindowOptions);
     close(): void;
     addDisposable(cb: () => void): void;
@@ -404,9 +417,11 @@ declare module 'uzumaki' {
     setMinSize(width: number, height: number): void;
     setMaxSize(width: number, height: number): void;
     setPosition(x: number, y: number): void;
-    set theme(theme: WindowTheme);
+    set theme(preference: WindowTheme);
     focus(): void;
     requestRedraw(): void;
+    setVar(key: string, value: string | null): void;
+    setVars(patch: Record<string, string | null | undefined>): void;
     requestAnimationFrame(callback: AnimationFrameCallback): number;
     cancelAnimationFrame(handle: number): void;
     set contentProtected(contentProtected: boolean);
@@ -430,7 +445,12 @@ declare module 'uzumaki' {
     get innerSize(): WindowSize | null;
     get outerSize(): WindowSize | null;
     get position(): WindowPosition | null;
-    get theme(): WindowTheme | null;
+    get theme(): WindowTheme;
+    /**
+     * The effective theme after resolving a `system` preference against the OS.
+     * Always `light` or `dark`. Track changes with the `themechange` event.
+     */
+    get resolvedTheme(): ResolvedTheme;
     get active(): boolean | null;
     get contentProtected(): boolean;
     get closable(): boolean;
@@ -455,6 +475,7 @@ declare module 'uzumaki' {
       handler: WindowEventHandler<K>,
       options?: ListenerOptions,
     ): void;
+    private _maybeEmitThemeChange;
     private _clearAnimationFrameCallbacks;
     private _syncAnimationFramePending;
     private _setAnimationFramePending;
@@ -473,6 +494,24 @@ declare module 'uzumaki' {
       path: AppPath;
     };
   }
+  /**
+   * Build a theme ref object from a map of tokens.
+   *
+   * Returns `{ vars, theme }`. Pass `vars` to a window's `vars` option (or
+   * `window.setVars(...)`); use `theme.token` anywhere a style prop value is
+   * expected. Values that start with `$` are looked up from the window's
+   * theme at paint time.
+   *
+   * @example
+   * const { vars, theme } = defineVars({ bg: '#0a0a0a', text: '#e4e4e7' });
+   * new Window('main', { vars, rootStyles: { bg: theme.bg, color: theme.text } });
+   */
+  declare function defineVars<T extends Record<string, string>>(
+    tokens: T,
+  ): {
+    vars: T;
+    theme: { [K in keyof T]: string };
+  };
   declare const RUNTIME_VERSION: number;
   //#endregion
   export {
@@ -513,6 +552,7 @@ declare module 'uzumaki' {
     type WindowPosition,
     type WindowSize,
     type WindowTheme,
+    defineVars,
     getWindow,
   };
 }
