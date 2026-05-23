@@ -1,6 +1,6 @@
 ---
 title: Theme with Variables
-description: Define theme tokens, reference them from props, and swap themes at runtime without rerendering React.
+description: Define theme tokens, reference them from props, swap themes at runtime, and follow the system light/dark preference.
 ---
 
 Define your colors and sizes once, reference them anywhere in your UI as `$name`, and swap the whole theme with a single call.
@@ -71,6 +71,65 @@ window.setVar('accent', '#22c55e');
 window.setVar('accent', null);
 ```
 
+## Light, Dark, or System
+
+A window has two related theme values:
+
+- `window.theme` is the preference you set: `'light'`, `'dark'`, or `'system'`. Defaults to `'system'`.
+- `window.resolvedTheme` is read-only and always `'light'` or `'dark'` — the effective theme after resolving `'system'` against the OS.
+
+```ts
+window.theme = 'system'; // follow the OS
+window.resolvedTheme; // 'dark' on a dark OS
+
+window.theme = 'light'; // force light
+window.resolvedTheme; // 'light'
+```
+
+A `'system'` window reads the OS preference at startup and tracks it as the user switches light/dark.
+
+## React to Theme Changes
+
+Listen for `themechange`. It fires whenever the resolved theme changes, whether from a manual `window.theme = ...` or from the OS switching while the preference is `'system'`. A forced theme that the OS change does not affect produces no event, so there is nothing to debounce.
+
+```ts
+window.on('themechange', (e) => {
+  e.theme; // resolved: 'light' | 'dark'
+  e.preference; // 'light' | 'dark' | 'system'
+  window.setVars(e.theme === 'dark' ? darkVars : lightVars);
+});
+```
+
+That is the whole contract: uzumaki emits the event and exposes the resolved value. Turning it into application state is up to you.
+
+## Build a Theme Hook
+
+The event pairs directly with React's `useSyncExternalStore`. uzumaki does not ship a theme hook, but it is a few lines on top of the API above:
+
+```ts
+import { useSyncExternalStore } from 'react';
+import type { Window } from 'uzumaki';
+
+export function useResolvedTheme(window: Window) {
+  return useSyncExternalStore(
+    (onChange) => {
+      window.on('themechange', onChange);
+      return () => window.off('themechange', onChange);
+    },
+    () => window.resolvedTheme,
+  );
+}
+```
+
+Now a component re-renders whenever the theme flips, from the OS or a settings toggle:
+
+```tsx
+function ThemeBadge({ window }: { window: Window }) {
+  const theme = useResolvedTheme(window);
+  return <text>Theme: {theme}</text>;
+}
+```
+
 ## Across the App
 
-Each window owns its own vars. If you have a theme store or React context driving the active theme, call `window.setVars(...)` from wherever the theme changes — components keep their state and the UI updates in place.
+Each window owns its own vars and its own preference. Apply tokens once per window by reacting to `themechange` (as above), and components keep their state while the UI updates in place. To drive several windows from one setting, set `window.theme` on each and let each window's listener apply its own vars.
