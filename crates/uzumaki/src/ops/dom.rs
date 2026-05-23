@@ -445,14 +445,14 @@ impl CoreNode {
             inline: scroll_align_from_int(inline),
             ..Default::default()
         };
-        let app_state = state.borrow::<SharedAppState>().clone();
+        let app_state = state.borrow::<SharedJsState>().clone();
         with_state(&app_state, |s| {
             let Some(entry) = s.windows.get_mut(&self.window_id) else {
                 return Err(window_not_found());
             };
             entry.dom.request_scroll_node_into_view(self.node_id, opts);
-            if let Some(handle) = entry.handle.as_ref() {
-                handle.winit_window.request_redraw();
+            if let Some(handle) = entry.window.as_ref() {
+                handle.request_redraw();
             }
             Ok(())
         })
