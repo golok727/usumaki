@@ -464,7 +464,8 @@ fn scroll_align_from_int(v: u32) -> ScrollAlign {
         0 => ScrollAlign::Start,
         1 => ScrollAlign::Center,
         2 => ScrollAlign::End,
-        _ => ScrollAlign::Nearest,
+        3 => ScrollAlign::Nearest,
+        _ => ScrollAlign::Start,
     }
 }
 
