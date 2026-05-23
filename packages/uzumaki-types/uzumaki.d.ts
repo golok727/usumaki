@@ -79,9 +79,11 @@ declare module 'uzumaki' {
     setAttribute(name: string, value: string): void;
     removeAttribute(name: string): void;
     getAttribute(name: string): unknown;
+    scrollIntoView(block: number, inline: number): void;
   }
   //#endregion
   //#region js/node.d.ts
+  type ScrollAlign = 'start' | 'center' | 'end' | 'nearest';
   declare class UzNode {
     protected readonly _native: CoreNode;
     readonly window: Window;
@@ -104,6 +106,13 @@ declare module 'uzumaki' {
      */
     remove(): void;
     removeChildren(): void;
+    scrollIntoView({
+      block,
+      inline,
+    }?: {
+      block?: ScrollAlign;
+      inline?: ScrollAlign;
+    }): void;
   }
   declare class UzTextNode extends UzNode {
     constructor(window: Window, text: string);

@@ -3,6 +3,15 @@ import { getNode, registerNode } from 'ext:uzumaki/registry.ts';
 import type { NodeId } from 'ext:uzumaki/types.ts';
 import type { Window } from 'ext:uzumaki/window.ts';
 
+export type ScrollAlign = 'start' | 'center' | 'end' | 'nearest';
+
+const SCROLL_ALIGN: Record<ScrollAlign, number> = {
+  start: 0,
+  center: 1,
+  end: 2,
+  nearest: 3,
+};
+
 export const NodeType = {
   Root: 1,
   Element: 2,
@@ -92,6 +101,19 @@ export class UzNode {
   removeChildren(): void {
     if (!this.window.isDisposed) {
       this._native.removeChildren();
+    }
+  }
+
+  scrollIntoView({
+    block = 'nearest',
+    inline = 'nearest',
+  }: { block?: ScrollAlign; inline?: ScrollAlign } = {}): void {
+    if (
+      !this.window.isDisposed &&
+      SCROLL_ALIGN[block] != null &&
+      SCROLL_ALIGN[inline] != null
+    ) {
+      this._native.scrollIntoView(SCROLL_ALIGN[block], SCROLL_ALIGN[inline]);
     }
   }
 }
