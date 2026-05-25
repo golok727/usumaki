@@ -1,4 +1,9 @@
-import type { UzEventMap, UzInputEvent } from 'ext:uzumaki/events.ts';
+import {
+  EventType,
+  buildDomEvent,
+  type UzEventMap,
+  type UzInputEvent,
+} from 'ext:uzumaki/events.ts';
 import type { Window } from 'ext:uzumaki/window.ts';
 import { UzElement } from 'ext:uzumaki/elements/base.ts';
 
@@ -19,6 +24,10 @@ export interface InputEventMap extends UzEventMap {
 export type UzInputType = 'text' | 'password';
 
 export class UzInputElement extends UzElement<InputEventMap> {
+  // Value as of the last commit (focus/blur boundary); `change` fires when the
+  // value diverges from this on blur.
+  private _committedValue = '';
+
   constructor(window: Window) {
     super('input', window);
 
@@ -26,6 +35,23 @@ export class UzInputElement extends UzElement<InputEventMap> {
       if (this._emitter._listenerCount('valuechange') > 0) {
         this._emitter.emit('valuechange', this.value);
       }
+    });
+
+    this.on('focus', () => {
+      this._committedValue = this.value;
+    });
+
+    this.on('blur', () => {
+      const value = this.value;
+      if (value === this._committedValue) return;
+      this._committedValue = value;
+      this.emit(
+        'change',
+        buildDomEvent(EventType.Change, this, {
+          inputType: '',
+          data: value,
+        }) as UzInputEvent,
+      );
     });
   }
 

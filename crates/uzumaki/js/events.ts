@@ -16,6 +16,7 @@ export const enum EventType {
   Focus = 21,
   Blur = 22,
   BeforeInput = 23,
+  Change = 24,
   Copy = 25,
   Cut = 26,
   Paste = 27,
@@ -140,6 +141,11 @@ export interface UzEventMap {
    * stop the edit from committing. Bubbles.
    */
   beforeinput: UzInputEvent;
+  /**
+   * The committed value changed: fires on blur for a text input whose value
+   * differs from when it was focused, and immediately when a checkbox toggles.
+   * Bubbles.
+   */
   change: UzInputEvent;
   /** The element gained focus. Does not bubble. */
   focus: UzFocusEvent;
@@ -182,6 +188,7 @@ export const EVENT_NAME_TO_TYPE: Record<string, EventType> = {
   keyup: EventType.KeyUp,
   input: EventType.Input,
   beforeinput: EventType.BeforeInput,
+  change: EventType.Change,
   focus: EventType.Focus,
   blur: EventType.Blur,
   copy: EventType.Copy,
@@ -202,6 +209,7 @@ export const EVENT_TYPE_TO_NAME: Record<number, EventName> = {
   [EventType.KeyUp]: 'keyup',
   [EventType.Input]: 'input',
   [EventType.BeforeInput]: 'beforeinput',
+  [EventType.Change]: 'change',
   [EventType.Focus]: 'focus',
   [EventType.Blur]: 'blur',
   [EventType.Copy]: 'copy',
@@ -225,7 +233,11 @@ function isKeyboardType(t: EventType): boolean {
 }
 
 function isInputType(t: EventType): boolean {
-  return t === EventType.Input || t === EventType.BeforeInput;
+  return (
+    t === EventType.Input ||
+    t === EventType.BeforeInput ||
+    t === EventType.Change
+  );
 }
 
 function isFocusType(t: EventType): boolean {
