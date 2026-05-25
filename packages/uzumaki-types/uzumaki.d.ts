@@ -158,7 +158,7 @@ declare module 'uzumaki' {
     Focus = 21,
     Blur = 22,
     BeforeInput = 23,
-    Change = 24,
+    Commit = 24,
     Copy = 25,
     Cut = 26,
     Paste = 27,
@@ -266,11 +266,11 @@ declare module 'uzumaki' {
      */
     beforeinput: UzInputEvent;
     /**
-     * The committed value changed: fires on blur for a text input whose value
-     * differs from when it was focused, and immediately when a checkbox toggles.
-     * Bubbles.
+     * The value was committed: fires on blur for a text input whose value differs
+     * from when it was focused, and immediately when a checkbox toggles. Pairs
+     * with the live `input`/`valuechange` events. Bubbles.
      */
-    change: UzInputEvent;
+    commit: UzInputEvent;
     /** The element gained focus. Does not bubble. */
     focus: UzFocusEvent;
     /** The element lost focus. Does not bubble. */

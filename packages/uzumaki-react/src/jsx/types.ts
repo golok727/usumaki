@@ -210,12 +210,12 @@ export namespace JSX {
         maxLength?: number;
         multiline?: boolean;
         secure?: boolean;
-        // input = "while typing"; change = "committed" (on blur if changed);
+        // input = "while typing"; commit = "finalized" (on blur if changed);
         // beforeinput = "before typing", preventDefault() stops the edit.
         /** Fires after the value changes while typing. */
         onInput?: (ev: UzInputEvent<UzInputElement>) => void;
         /** Fires on blur when the value changed since it was focused. */
-        onChange?: (ev: UzInputEvent<UzInputElement>) => void;
+        onCommit?: (ev: UzInputEvent<UzInputElement>) => void;
         /**
          * Fires before an edit commits. Call `ev.preventDefault()` to reject
          * the edit; `ev.data` holds the text about to be inserted.
@@ -233,7 +233,7 @@ export namespace JSX {
       EventProps<UzCheckboxElement> & {
         checked?: boolean;
         /** Fires immediately when the checkbox toggles. */
-        onChange?: (ev: UzInputEvent<UzCheckboxElement>) => void;
+        onCommit?: (ev: UzInputEvent<UzCheckboxElement>) => void;
         onValueChange?: (value: boolean) => void;
         onInput?: (ev: UzInputEvent<UzCheckboxElement>) => void;
         onFocus?: (ev: UzFocusEvent<UzCheckboxElement>) => void;

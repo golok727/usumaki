@@ -15,14 +15,14 @@ export class UzCheckboxElement extends UzElement<CheckboxEventHandlerMap> {
   constructor(window: Window) {
     super('checkbox', window);
 
-    // Toggling commits immediately, so `change` fires right after `input`.
+    // Toggling commits immediately, so `commit` fires right after `input`.
     this.on('input', () => {
       if (this._emitter._listenerCount('valuechange') > 0) {
         this._emitter.emit('valuechange', this.checked);
       }
       this.emit(
-        'change',
-        buildDomEvent(EventType.Change, this, {
+        'commit',
+        buildDomEvent(EventType.Commit, this, {
           inputType: '',
           data: null,
         }) as UzInputEvent,

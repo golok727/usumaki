@@ -16,7 +16,7 @@ export const enum EventType {
   Focus = 21,
   Blur = 22,
   BeforeInput = 23,
-  Change = 24,
+  Commit = 24,
   Copy = 25,
   Cut = 26,
   Paste = 27,
@@ -142,11 +142,11 @@ export interface UzEventMap {
    */
   beforeinput: UzInputEvent;
   /**
-   * The committed value changed: fires on blur for a text input whose value
-   * differs from when it was focused, and immediately when a checkbox toggles.
-   * Bubbles.
+   * The value was committed: fires on blur for a text input whose value differs
+   * from when it was focused, and immediately when a checkbox toggles. Pairs
+   * with the live `input`/`valuechange` events. Bubbles.
    */
-  change: UzInputEvent;
+  commit: UzInputEvent;
   /** The element gained focus. Does not bubble. */
   focus: UzFocusEvent;
   /** The element lost focus. Does not bubble. */
@@ -188,7 +188,7 @@ export const EVENT_NAME_TO_TYPE: Record<string, EventType> = {
   keyup: EventType.KeyUp,
   input: EventType.Input,
   beforeinput: EventType.BeforeInput,
-  change: EventType.Change,
+  commit: EventType.Commit,
   focus: EventType.Focus,
   blur: EventType.Blur,
   copy: EventType.Copy,
@@ -209,7 +209,7 @@ export const EVENT_TYPE_TO_NAME: Record<number, EventName> = {
   [EventType.KeyUp]: 'keyup',
   [EventType.Input]: 'input',
   [EventType.BeforeInput]: 'beforeinput',
-  [EventType.Change]: 'change',
+  [EventType.Commit]: 'commit',
   [EventType.Focus]: 'focus',
   [EventType.Blur]: 'blur',
   [EventType.Copy]: 'copy',
@@ -236,7 +236,7 @@ function isInputType(t: EventType): boolean {
   return (
     t === EventType.Input ||
     t === EventType.BeforeInput ||
-    t === EventType.Change
+    t === EventType.Commit
   );
 }
 

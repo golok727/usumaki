@@ -46,8 +46,8 @@ export class UzInputElement extends UzElement<InputEventMap> {
       if (value === this._committedValue) return;
       this._committedValue = value;
       this.emit(
-        'change',
-        buildDomEvent(EventType.Change, this, {
+        'commit',
+        buildDomEvent(EventType.Commit, this, {
           inputType: '',
           data: value,
         }) as UzInputEvent,
