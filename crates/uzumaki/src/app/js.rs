@@ -13,7 +13,7 @@ use crate::app::handle::{MainToJs, PendingDestroy, UserEvent, WindowEntryId};
 use crate::app::{AppConfig, print_runtime_error};
 use crate::cursor::UzCursorIcon;
 use crate::element::ImageData;
-use crate::event_dispatch::{self, AppEvent};
+use crate::events::{self, AppEvent};
 use crate::node::{UzNodeId, VarBinding};
 use crate::ops::style_util::{clear_node_style, set_node_style};
 use crate::ops::window::WindowOptions;
@@ -95,8 +95,8 @@ pub struct JsWindow {
     pub cursor_blink_generation: u64,
 
     pub blink_timer: Option<tokio::task::JoinHandle<()>>,
-    pub mouse_buttons: event_dispatch::MouseButtons,
-    pub modifiers: event_dispatch::KeyModifiers,
+    pub mouse_buttons: events::MouseButtons,
+    pub modifiers: events::KeyModifiers,
     pub state: WindowMirror,
     /// Theme variables addressable from style attrs as `$name`.
     pub vars: HashMap<String, String>,
@@ -157,8 +157,8 @@ impl JsWindow {
             rem_base: 16.0,
             cursor_blink_generation: 0,
             blink_timer: None,
-            mouse_buttons: event_dispatch::MouseButtons::empty(),
-            modifiers: event_dispatch::KeyModifiers::empty(),
+            mouse_buttons: events::MouseButtons::empty(),
+            modifiers: events::KeyModifiers::empty(),
             state: WindowMirror::from_options(options),
             vars: HashMap::new(),
         }
@@ -484,7 +484,7 @@ fn handle_message(
                 dispatch_event_to_js(
                     worker,
                     dispatch_fn,
-                    &AppEvent::ThemeChanged(event_dispatch::ThemeChangedEventData {
+                    &AppEvent::ThemeChanged(events::UzThemeEvent {
                         window_id: id,
                         theme: theme.to_string(),
                     }),
@@ -493,7 +493,7 @@ fn handle_message(
             dispatch_event_to_js(
                 worker,
                 dispatch_fn,
-                &AppEvent::WindowLoad(event_dispatch::WindowLoadEventData { window_id: id }),
+                &AppEvent::WindowLoad(events::UzWindowEvent { window_id: id }),
             );
         }
         MainToJs::BuildFrame { id } => {
@@ -642,7 +642,7 @@ fn handle_window_event(
                 dispatch_event_to_js(
                     worker,
                     dispatch_fn,
-                    &AppEvent::Resize(event_dispatch::ResizeEventData {
+                    &AppEvent::Resize(events::UzResizeEvent {
                         window_id: wid,
                         width: w,
                         height: h,
@@ -659,7 +659,7 @@ fn handle_window_event(
                     let mouse_buttons = entry.mouse_buttons;
                     let JsWindow { window, dom, .. } = entry;
                     if let Some(window) = window
-                        && event_dispatch::handle_cursor_moved(dom, window, position, mouse_buttons)
+                        && events::handle_cursor_moved(dom, window, position, mouse_buttons)
                     {
                         needs_redraw = true;
                     }
@@ -673,7 +673,7 @@ fn handle_window_event(
         } => {
             refresh_blink_timer = true;
             let events = with_state(state, |s| {
-                use event_dispatch::MouseButtons;
+                use events::MouseButtons;
                 use winit::event::{ElementState, MouseButton};
 
                 let button_bit = match button {
@@ -692,14 +692,8 @@ fn handle_window_event(
 
                 let JsWindow { window, dom, .. } = entry;
                 let window = window.as_mut()?;
-                let (redraw, mouse_events) = event_dispatch::handle_mouse_input(
-                    dom,
-                    window,
-                    wid,
-                    btn_state,
-                    button,
-                    mouse_buttons,
-                );
+                let (redraw, mouse_events) =
+                    events::handle_mouse_input(dom, window, wid, btn_state, button, mouse_buttons);
                 if redraw {
                     needs_redraw = true;
                 }
@@ -721,7 +715,7 @@ fn handle_window_event(
 
             let raw_event = with_state_ref(state, |s| {
                 s.windows.get(&wid).and_then(|entry| {
-                    event_dispatch::build_key_event(&entry.dom, wid, &key_event, modifiers)
+                    events::build_key_event(&entry.dom, wid, &key_event, modifiers)
                 })
             });
 
@@ -737,12 +731,7 @@ fn handle_window_event(
                 } else {
                     let tab_outcome = with_state(state, |s| {
                         s.windows.get_mut(&wid).map(|entry| {
-                            event_dispatch::handle_tab_focus(
-                                &mut entry.dom,
-                                wid,
-                                &key_event,
-                                modifiers,
-                            )
+                            events::handle_tab_focus(&mut entry.dom, wid, &key_event, modifiers)
                         })
                     });
                     let tab_consumed = if let Some(outcome) = tab_outcome {
@@ -760,7 +749,7 @@ fn handle_window_event(
                     let clipboard_cmd = with_state(state, |s| {
                         let bridge = crate::clipboard::ClipboardBridge::new(&s.proxy);
                         s.windows.get(&wid).and_then(|entry| {
-                            event_dispatch::build_clipboard_command(
+                            events::build_clipboard_command(
                                 &entry.dom, &key_event, modifiers, &bridge,
                             )
                         })
@@ -769,7 +758,7 @@ fn handle_window_event(
                     let clipboard_consumed = if tab_consumed {
                         true
                     } else if let Some(cmd) = clipboard_cmd {
-                        let clipboard_event = event_dispatch::clipboard_command_to_event(&cmd, wid);
+                        let clipboard_event = events::clipboard_command_to_event(&cmd, wid);
                         let clipboard_prevented =
                             dispatch_event_to_js(worker, dispatch_fn, &clipboard_event);
 
@@ -779,7 +768,7 @@ fn handle_window_event(
                                 if let Some(entry) = s.windows.get_mut(&wid) {
                                     let tr = entry.window.as_mut().map(|w| &mut w.text_renderer);
                                     if let Some(text_renderer) = tr {
-                                        event_dispatch::apply_clipboard_command(
+                                        events::apply_clipboard_command(
                                             cmd,
                                             &mut entry.dom,
                                             wid,
@@ -804,10 +793,7 @@ fn handle_window_event(
                                     if let Some(entry) = s.windows.get_mut(&wid)
                                         && let Some(window) = entry.window.as_mut()
                                     {
-                                        event_dispatch::scroll_input_to_cursor(
-                                            &mut entry.dom,
-                                            window,
-                                        );
+                                        events::scroll_input_to_cursor(&mut entry.dom, window);
                                     }
                                 });
                             }
@@ -821,7 +807,7 @@ fn handle_window_event(
                         let input_events = with_state(state, |s| {
                             s.windows.get_mut(&wid).map(|entry| {
                                 let window = entry.window.as_mut().unwrap();
-                                let (redraw, events) = event_dispatch::handle_key_for_input(
+                                let (redraw, events) = events::handle_key_for_input(
                                     &mut entry.dom,
                                     window,
                                     wid,
@@ -829,17 +815,13 @@ fn handle_window_event(
                                     modifiers,
                                 );
                                 let (checkbox_redraw, checkbox_events) =
-                                    event_dispatch::handle_key_for_checkbox(
+                                    events::handle_key_for_checkbox(
                                         &mut entry.dom,
                                         wid,
                                         &key_event,
                                     );
                                 let (button_redraw, button_events) =
-                                    event_dispatch::handle_key_for_button(
-                                        &mut entry.dom,
-                                        wid,
-                                        &key_event,
-                                    );
+                                    events::handle_key_for_button(&mut entry.dom, wid, &key_event);
                                 if redraw || checkbox_redraw || button_redraw {
                                     needs_redraw = true;
                                 }
@@ -859,7 +841,7 @@ fn handle_window_event(
                         with_state(state, |s| {
                             if let Some(entry) = s.windows.get_mut(&wid)
                                 && entry.dom.focused_node.is_none()
-                                && event_dispatch::handle_key_for_view_selection(
+                                && events::handle_key_for_view_selection(
                                     &mut entry.dom,
                                     &key_event,
                                     modifiers,
@@ -874,7 +856,7 @@ fn handle_window_event(
             refresh_blink_timer = true;
         }
         WindowEvent::ModifiersChanged(mods) => {
-            use event_dispatch::KeyModifiers;
+            use events::KeyModifiers;
             let m = mods.state();
             let mut flags = KeyModifiers::empty();
             flags.set(KeyModifiers::CTRL, m.control_key());
@@ -900,7 +882,7 @@ fn handle_window_event(
                         is.reset_blink();
                     }
                     if focused && let Some(window) = entry.window.as_mut() {
-                        event_dispatch::update_ime_cursor_area(&mut entry.dom, window);
+                        events::update_ime_cursor_area(&mut entry.dom, window);
                     }
                     needs_redraw = true;
                 }
@@ -927,7 +909,7 @@ fn handle_window_event(
             dispatch_event_to_js(
                 worker,
                 dispatch_fn,
-                &AppEvent::ThemeChanged(event_dispatch::ThemeChangedEventData {
+                &AppEvent::ThemeChanged(events::UzThemeEvent {
                     window_id: wid,
                     theme: theme.to_string(),
                 }),
@@ -940,7 +922,7 @@ fn handle_window_event(
                         let window = entry.window.as_mut()?;
                         let fid = entry.dom.focused_node?;
 
-                        if let Some(meta) = event_dispatch::input_layout_meta(&entry.dom, fid)
+                        if let Some(meta) = events::input_layout_meta(&entry.dom, fid)
                             && let Some(node) = entry.dom.nodes.get_mut(fid)
                             && let Some(is) = node.as_text_input_mut()
                         {
@@ -958,16 +940,14 @@ fn handle_window_event(
                         let node = entry.dom.nodes.get_mut(fid)?;
                         let is = node.as_text_input_mut()?;
                         let _edit = is.commit_ime_text(&text, &mut window.text_renderer)?;
-                        event_dispatch::update_ime_cursor_area(&mut entry.dom, window);
+                        events::update_ime_cursor_area(&mut entry.dom, window);
                         needs_redraw = true;
-                        Some(vec![event_dispatch::AppEvent::Input(
-                            event_dispatch::InputEventData {
-                                window_id: wid,
-                                node_id: fid,
-                                input_type: "insertCompositionText".to_string(),
-                                data: Some(text.clone()),
-                            },
-                        )])
+                        Some(vec![events::AppEvent::Input(events::UzInputEvent {
+                            window_id: wid,
+                            node_id: fid,
+                            input_type: "insertCompositionText".to_string(),
+                            data: Some(text.clone()),
+                        })])
                     })
                 });
                 if let Some(events) = input_events {
@@ -986,7 +966,7 @@ fn handle_window_event(
                     {
                         is.set_preedit(text.clone(), cursor);
                         if let Some(window) = entry.window.as_mut() {
-                            event_dispatch::update_ime_cursor_area(&mut entry.dom, window);
+                            events::update_ime_cursor_area(&mut entry.dom, window);
                         }
                         needs_redraw = true;
                     }
@@ -1003,7 +983,7 @@ fn handle_window_event(
                     {
                         is.clear_preedit();
                         if let Some(window) = entry.window.as_mut() {
-                            event_dispatch::update_ime_cursor_area(&mut entry.dom, window);
+                            events::update_ime_cursor_area(&mut entry.dom, window);
                         }
                         needs_redraw = true;
                     }
@@ -1031,16 +1011,12 @@ fn handle_window_event(
                     winit::event::MouseScrollDelta::PixelDelta(pos) => (pos.x, pos.y),
                 };
                 if let Some(entry) = s.windows.get_mut(&wid) {
-                    if entry
-                        .modifiers
-                        .contains(event_dispatch::KeyModifiers::SHIFT)
-                        && dx == 0.0
-                    {
+                    if entry.modifiers.contains(events::KeyModifiers::SHIFT) && dx == 0.0 {
                         dx = dy;
                         dy = 0.0;
                     }
                     if let Some(window) = entry.window.as_mut()
-                        && event_dispatch::handle_mouse_wheel(&mut entry.dom, window, dx, dy)
+                        && events::handle_mouse_wheel(&mut entry.dom, window, dx, dy)
                     {
                         needs_redraw = true;
                     }
@@ -1051,7 +1027,7 @@ fn handle_window_event(
             dispatch_event_to_js(
                 worker,
                 dispatch_fn,
-                &AppEvent::WindowClose(event_dispatch::WindowLoadEventData { window_id: wid }),
+                &AppEvent::WindowClose(events::UzWindowEvent { window_id: wid }),
             );
             // Drop the native window handle so the OS window goes away
             // immediately, but keep the JsWindow (DOM, mirror, etc.) in state.

@@ -5,7 +5,7 @@ pub mod clipboard;
 pub mod construct;
 pub mod cursor;
 pub mod element;
-pub mod event_dispatch;
+pub mod events;
 pub mod gpu;
 pub mod headless;
 pub mod hit_tree;

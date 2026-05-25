@@ -668,10 +668,10 @@ impl InputState {
     pub fn handle_key(
         &mut self,
         key: &Key,
-        modifiers: crate::event_dispatch::KeyModifiers,
+        modifiers: crate::events::KeyModifiers,
         renderer: &mut TextRenderer,
     ) -> KeyResult {
-        use crate::event_dispatch::KeyModifiers;
+        use crate::events::KeyModifiers;
         if self.disabled {
             return KeyResult::Ignored;
         }
