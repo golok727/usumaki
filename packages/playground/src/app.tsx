@@ -8,6 +8,7 @@ import { InputsPage } from './pages/inputsPage';
 import { LayoutPage } from './pages/layoutPage';
 import { StressPage } from './pages/stressPage';
 import { EventsPage } from './pages/eventsPage';
+import { DragPage } from './pages/dragPage';
 import { IssuesPage } from './pages/issuesPage';
 import { ImagesPage } from './pages/imagesPage';
 import { TimerPage } from './pages/timerPage';
@@ -24,6 +25,7 @@ export function App() {
     layout: <LayoutPage />,
     stress: <StressPage />,
     events: <EventsPage />,
+    drag: <DragPage />,
     issues: <IssuesPage />,
     images: <ImagesPage />,
     timer: <TimerPage />,

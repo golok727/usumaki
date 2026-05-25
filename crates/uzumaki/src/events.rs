@@ -20,8 +20,8 @@ pub use clipboard::{
     clipboard_command_to_event,
 };
 pub use keyboard::{
-    TabFocusOutcome, build_key_event, handle_key_for_button, handle_key_for_checkbox,
-    handle_key_for_input, handle_key_for_view_selection, handle_tab_focus,
+    TabFocusOutcome, build_beforeinput_event, build_key_event, handle_key_for_button,
+    handle_key_for_checkbox, handle_key_for_input, handle_key_for_view_selection, handle_tab_focus,
 };
 pub use mouse::{handle_cursor_moved, handle_mouse_input};
 pub use text_input::{

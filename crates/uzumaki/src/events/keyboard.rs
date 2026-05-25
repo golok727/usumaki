@@ -55,6 +55,32 @@ pub fn build_key_event(
     })
 }
 
+/// Build a cancelable `beforeinput` for the focused input, describing the edit
+/// the key would produce. Dispatched before [`handle_key_for_input`] so JS can
+/// `preventDefault()` to stop the edit from committing. Returns `None` when the
+/// key is not an edit or no input is focused.
+pub fn build_beforeinput_event(
+    dom: &UIState,
+    wid: u32,
+    key_event: &winit::event::KeyEvent,
+    modifiers: KeyModifiers,
+) -> Option<AppEvent> {
+    use winit::event::ElementState;
+
+    if key_event.state != ElementState::Pressed {
+        return None;
+    }
+    let fid = dom.focused_node?;
+    let is = dom.nodes.get(fid)?.as_text_input()?;
+    let (kind, data) = is.preview_edit(&key_event.logical_key, modifiers)?;
+    Some(AppEvent::BeforeInput(UzInputEvent {
+        window_id: wid,
+        node_id: fid,
+        input_type: kind.input_type().to_string(),
+        data,
+    }))
+}
+
 /// Handle keyboard input for the focused input element. Called AFTER the raw key
 /// event has been dispatched to JS (so preventDefault can suppress this).
 /// Returns (needs_redraw, events_to_dispatch).
@@ -209,16 +235,18 @@ pub fn handle_key_for_button(
     // Synthetic click: use the element's bounds center if we have a hitbox,
     // otherwise (0, 0). The JS handler usually doesn't depend on coords for
     // keyboard activations.
-    let (x, y) = node
+    let (x, y, local_x, local_y) = node
         .hitbox_id
         .and_then(|hid| dom.hitbox_store.get(hid))
         .map(|hb| {
             (
                 (hb.bounds.x + hb.bounds.width / 2.0) as f32,
                 (hb.bounds.y + hb.bounds.height / 2.0) as f32,
+                (hb.bounds.width / 2.0) as f32,
+                (hb.bounds.height / 2.0) as f32,
             )
         })
-        .unwrap_or((0.0, 0.0));
+        .unwrap_or((0.0, 0.0, 0.0, 0.0));
 
     (
         true,
@@ -227,10 +255,13 @@ pub fn handle_key_for_button(
             node_id: focused_id,
             x,
             y,
+            local_x,
+            local_y,
             screen_x: x,
             screen_y: y,
             button: 0,
             buttons: MouseButtons::empty(),
+            related_node_id: None,
         })],
     )
 }

@@ -128,15 +128,41 @@ interface ElementAttributes
 }
 
 interface EventProps<T extends UzNode> {
+  /** A press and release landed on this element. */
   onClick?: (ev: UzMouseEvent<T>) => void;
+  /** Capture-phase {@link onClick}. */
   onClickCapture?: (ev: UzMouseEvent<T>) => void;
+  /** A mouse button was pressed over this element. */
   onMouseDown?: (ev: UzMouseEvent<T>) => void;
+  /** Capture-phase {@link onMouseDown}. */
   onMouseDownCapture?: (ev: UzMouseEvent<T>) => void;
+  /** A mouse button was released over this element. */
   onMouseUp?: (ev: UzMouseEvent<T>) => void;
+  /** Capture-phase {@link onMouseUp}. */
   onMouseUpCapture?: (ev: UzMouseEvent<T>) => void;
+  /** The pointer moved over this element. */
+  onMouseMove?: (ev: UzMouseEvent<T>) => void;
+  /** Capture-phase {@link onMouseMove}. */
+  onMouseMoveCapture?: (ev: UzMouseEvent<T>) => void;
+  /** The pointer entered this element. Does not fire for descendants. */
+  onMouseEnter?: (ev: UzMouseEvent<T>) => void;
+  /** The pointer left this element. Does not fire for descendants. */
+  onMouseLeave?: (ev: UzMouseEvent<T>) => void;
+  /** The pointer entered this element or one of its descendants. */
+  onMouseOver?: (ev: UzMouseEvent<T>) => void;
+  /** Capture-phase {@link onMouseOver}. */
+  onMouseOverCapture?: (ev: UzMouseEvent<T>) => void;
+  /** The pointer left this element or one of its descendants. */
+  onMouseOut?: (ev: UzMouseEvent<T>) => void;
+  /** Capture-phase {@link onMouseOut}. */
+  onMouseOutCapture?: (ev: UzMouseEvent<T>) => void;
+  /** A key was pressed while this element was focused. */
   onKeyDown?: (ev: UzKeyboardEvent<T>) => void;
+  /** Capture-phase {@link onKeyDown}. */
   onKeyDownCapture?: (ev: UzKeyboardEvent<T>) => void;
+  /** A key was released while this element was focused. */
   onKeyUp?: (ev: UzKeyboardEvent<T>) => void;
+  /** Capture-phase {@link onKeyUp}. */
   onKeyUpCapture?: (ev: UzKeyboardEvent<T>) => void;
 }
 
@@ -184,13 +210,17 @@ export namespace JSX {
         maxLength?: number;
         multiline?: boolean;
         secure?: boolean;
-        // change = "after commit"
-        // input = "while typing"
-        // beforeinput = "before typing"
-        // todo add after implementing "change" event
-        // maybe a find a better name ?
-        // onChange?: (ev: UzumakiInputEvent) => void;
+        // input = "while typing"; commit = "finalized" (on blur if changed);
+        // beforeinput = "before typing", preventDefault() stops the edit.
+        /** Fires after the value changes while typing. */
         onInput?: (ev: UzInputEvent<UzInputElement>) => void;
+        /** Fires on blur when the value changed since it was focused. */
+        onCommit?: (ev: UzInputEvent<UzInputElement>) => void;
+        /**
+         * Fires before an edit commits. Call `ev.preventDefault()` to reject
+         * the edit; `ev.data` holds the text about to be inserted.
+         */
+        onBeforeInput?: (ev: UzInputEvent<UzInputElement>) => void;
         onFocus?: (ev: UzFocusEvent<UzInputElement>) => void;
         onBlur?: (ev: UzFocusEvent<UzInputElement>) => void;
         onValueChange?: (value: string) => void;
@@ -202,7 +232,8 @@ export namespace JSX {
     checkbox: ElementAttributes &
       EventProps<UzCheckboxElement> & {
         checked?: boolean;
-        // onChange?: (ev: UzumakiInputEvent) => void;
+        /** Fires immediately when the checkbox toggles. */
+        onCommit?: (ev: UzInputEvent<UzCheckboxElement>) => void;
         onValueChange?: (value: boolean) => void;
         onInput?: (ev: UzInputEvent<UzCheckboxElement>) => void;
         onFocus?: (ev: UzFocusEvent<UzCheckboxElement>) => void;

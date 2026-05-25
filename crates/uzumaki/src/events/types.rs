@@ -39,10 +39,16 @@ pub struct UzMouseEvent {
     pub node_id: UzNodeId,
     pub x: f32,
     pub y: f32,
+    /// Cursor position relative to the target element's top-left corner.
+    pub local_x: f32,
+    pub local_y: f32,
     pub screen_x: f32,
     pub screen_y: f32,
     pub button: u8,
     pub buttons: MouseButtons,
+    /// The element the pointer entered from or exited to, for
+    /// enter/leave/over/out. `None` for other mouse events.
+    pub related_node_id: Option<UzNodeId>,
 }
 
 #[derive(Serialize)]

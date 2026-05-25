@@ -6,11 +6,17 @@ export const enum EventType {
   MouseDown = 1,
   MouseUp = 2,
   Click = 3,
+  MouseEnter = 4,
+  MouseLeave = 5,
+  MouseOver = 6,
+  MouseOut = 7,
   KeyDown = 10,
   KeyUp = 11,
   Input = 20,
   Focus = 21,
   Blur = 22,
+  BeforeInput = 23,
+  Commit = 24,
   Copy = 25,
   Cut = 26,
   Paste = 27,
@@ -40,10 +46,18 @@ export interface UzMouseEvent<
 > extends UzumakiEvent<T> {
   readonly x: number;
   readonly y: number;
+  /** Cursor position relative to the target element's top-left corner. */
+  readonly localX: number;
+  readonly localY: number;
   readonly screenX: number;
   readonly screenY: number;
   readonly button: number;
   readonly buttons: number;
+  /**
+   * The element the pointer entered from or exited to. Set for
+   * `mouseenter`/`mouseleave`/`mouseover`/`mouseout`; `null` otherwise.
+   */
+  readonly relatedTarget: UzNode | null;
 }
 
 export interface UzKeyboardEvent<
@@ -62,7 +76,12 @@ export interface UzKeyboardEvent<
 export interface UzInputEvent<
   T extends UzNode = UzNode,
 > extends UzumakiEvent<T> {
+  /**
+   * The kind of edit, e.g. `insertText`, `deleteContentBackward`,
+   * `historyUndo`. Matches the `input`/`beforeinput` `inputType` semantics.
+   */
   readonly inputType: string;
+  /** The inserted text, or `null` for deletions and history edits. */
   readonly data: string | null;
 }
 
@@ -95,15 +114,42 @@ export interface UzThemeChangeEvent<
 
 /** DOM-style events that can be attached to any element. */
 export interface UzEventMap {
+  /** Pointer moved over the element. Bubbles. */
   mousemove: UzMouseEvent;
+  /** A mouse button was pressed over the element. Bubbles. */
   mousedown: UzMouseEvent;
+  /** A mouse button was released over the element. Bubbles. */
   mouseup: UzMouseEvent;
+  /** A press and release landed on the same element. Bubbles. */
   click: UzMouseEvent;
+  /** Pointer entered the element. Fires per element; does not bubble. */
+  mouseenter: UzMouseEvent;
+  /** Pointer left the element. Fires per element; does not bubble. */
+  mouseleave: UzMouseEvent;
+  /** Pointer entered the element or a descendant. Bubbles. */
+  mouseover: UzMouseEvent;
+  /** Pointer left the element or a descendant. Bubbles. */
+  mouseout: UzMouseEvent;
+  /** A key was pressed while the element was focused. Bubbles. */
   keydown: UzKeyboardEvent;
+  /** A key was released while the element was focused. Bubbles. */
   keyup: UzKeyboardEvent;
+  /** The element's value changed. Bubbles. */
   input: UzInputEvent;
-  change: UzInputEvent;
+  /**
+   * Fires before an edit is applied to an input. Call `preventDefault()` to
+   * stop the edit from committing. Bubbles.
+   */
+  beforeinput: UzInputEvent;
+  /**
+   * The value was committed: fires on blur for a text input whose value differs
+   * from when it was focused, and immediately when a checkbox toggles. Pairs
+   * with the live `input`/`valuechange` events. Bubbles.
+   */
+  commit: UzInputEvent;
+  /** The element gained focus. Does not bubble. */
   focus: UzFocusEvent;
+  /** The element lost focus. Does not bubble. */
   blur: UzFocusEvent;
   copy: UzClipboardEvent;
   cut: UzClipboardEvent;
@@ -134,9 +180,15 @@ export const EVENT_NAME_TO_TYPE: Record<string, EventType> = {
   mousedown: EventType.MouseDown,
   mouseup: EventType.MouseUp,
   click: EventType.Click,
+  mouseenter: EventType.MouseEnter,
+  mouseleave: EventType.MouseLeave,
+  mouseover: EventType.MouseOver,
+  mouseout: EventType.MouseOut,
   keydown: EventType.KeyDown,
   keyup: EventType.KeyUp,
   input: EventType.Input,
+  beforeinput: EventType.BeforeInput,
+  commit: EventType.Commit,
   focus: EventType.Focus,
   blur: EventType.Blur,
   copy: EventType.Copy,
@@ -149,9 +201,15 @@ export const EVENT_TYPE_TO_NAME: Record<number, EventName> = {
   [EventType.MouseDown]: 'mousedown',
   [EventType.MouseUp]: 'mouseup',
   [EventType.Click]: 'click',
+  [EventType.MouseEnter]: 'mouseenter',
+  [EventType.MouseLeave]: 'mouseleave',
+  [EventType.MouseOver]: 'mouseover',
+  [EventType.MouseOut]: 'mouseout',
   [EventType.KeyDown]: 'keydown',
   [EventType.KeyUp]: 'keyup',
   [EventType.Input]: 'input',
+  [EventType.BeforeInput]: 'beforeinput',
+  [EventType.Commit]: 'commit',
   [EventType.Focus]: 'focus',
   [EventType.Blur]: 'blur',
   [EventType.Copy]: 'copy',
@@ -162,10 +220,12 @@ export const EVENT_TYPE_TO_NAME: Record<number, EventName> = {
 export const NON_BUBBLING_TYPES: ReadonlySet<EventType> = new Set([
   EventType.Focus,
   EventType.Blur,
+  EventType.MouseEnter,
+  EventType.MouseLeave,
 ]);
 
 function isMouseType(t: EventType): boolean {
-  return t >= 0 && t <= 3;
+  return t >= 0 && t <= 7;
 }
 
 function isKeyboardType(t: EventType): boolean {
@@ -173,7 +233,11 @@ function isKeyboardType(t: EventType): boolean {
 }
 
 function isInputType(t: EventType): boolean {
-  return t === EventType.Input;
+  return (
+    t === EventType.Input ||
+    t === EventType.BeforeInput ||
+    t === EventType.Commit
+  );
 }
 
 function isFocusType(t: EventType): boolean {
@@ -289,10 +353,13 @@ export function buildDomEvent(
     return Object.assign(base, {
       x: payload?.x ?? 0,
       y: payload?.y ?? 0,
+      localX: payload?.localX ?? 0,
+      localY: payload?.localY ?? 0,
       screenX: payload?.screenX ?? 0,
       screenY: payload?.screenY ?? 0,
       button: payload?.button ?? 0,
       buttons: payload?.buttons ?? 0,
+      relatedTarget: payload?.relatedTarget ?? null,
     }) as UzMouseEvent;
   }
 
