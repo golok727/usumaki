@@ -18,6 +18,7 @@ import {
 } from 'ext:uzumaki/window.ts';
 import { EventType as UzEventType } from 'ext:uzumaki/events.ts';
 import { dispatchDomEvent } from 'ext:uzumaki/dispatcher.ts';
+import { getNode } from 'ext:uzumaki/registry.ts';
 import { AppPath } from 'ext:uzumaki/types.ts';
 
 const { ObjectDefineProperty } = primordials;
@@ -114,19 +115,30 @@ defineDispatch(
     nodeId: number,
     x: number,
     y: number,
+    localX: number,
+    localY: number,
     screenX: number,
     screenY: number,
     button: number,
     buttons: number,
-  ) =>
-    dispatchToNode(windowId, type, nodeId, {
+    relatedNodeId: number | null,
+  ) => {
+    const w = Window._getById(windowId);
+    if (!w) return false;
+    const relatedTarget =
+      relatedNodeId == null ? null : (getNode(w, relatedNodeId) ?? null);
+    return dispatchToNode(windowId, type, nodeId, {
       x,
       y,
+      localX,
+      localY,
       screenX,
       screenY,
       button,
       buttons,
-    }),
+      relatedTarget,
+    });
+  },
 );
 
 defineDispatch(
@@ -152,8 +164,14 @@ defineDispatch(
 
 defineDispatch(
   '__uzumaki_dispatch_input__',
-  (windowId: number, nodeId: number, inputType: string, data: string | null) =>
-    dispatchToNode(windowId, UzEventType.Input, nodeId, {
+  (
+    type: UzEventType,
+    windowId: number,
+    nodeId: number,
+    inputType: string,
+    data: string | null,
+  ) =>
+    dispatchToNode(windowId, type, nodeId, {
       inputType,
       data,
     }),

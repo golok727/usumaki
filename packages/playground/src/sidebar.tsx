@@ -11,6 +11,7 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: 'layout', label: 'Layout Lab', icon: 'layout-grid' },
   { id: 'stress', label: 'Stress Test', icon: 'zap' },
   { id: 'events', label: 'Mouse Events', icon: 'mouse-pointer-click' },
+  { id: 'drag', label: 'Drag', icon: 'drag' },
   // { id: 'window', label: 'Window Lab', icon: 'square-stack' },
   { id: 'timer', label: 'Timers', icon: 'timer' },
   { id: 'clipboard', label: 'Clipboard', icon: 'clipboard' },

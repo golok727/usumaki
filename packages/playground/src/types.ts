@@ -4,6 +4,7 @@ export type Tab =
   | 'layout'
   | 'stress'
   | 'events'
+  | 'drag'
   | 'issues'
   | 'images'
   | 'timer'

@@ -573,22 +573,28 @@ fn flush_external_memory(worker: &mut MainWorker, state: &SharedJsState) {
 }
 
 /// Numeric `EventType` discriminators, mirroring the `EventType` enum in
-/// `js/events.ts`. Passed to the JS dispatch functions so they can build the
-/// DOM event without a serialized `type` field.
+/// `js/events.ts`.
+const ET_MOUSE_MOVE: f64 = 0.0;
 const ET_MOUSE_DOWN: f64 = 1.0;
 const ET_MOUSE_UP: f64 = 2.0;
 const ET_CLICK: f64 = 3.0;
+const ET_MOUSE_ENTER: f64 = 4.0;
+const ET_MOUSE_LEAVE: f64 = 5.0;
+const ET_MOUSE_OVER: f64 = 6.0;
+const ET_MOUSE_OUT: f64 = 7.0;
 const ET_KEY_DOWN: f64 = 10.0;
 const ET_KEY_UP: f64 = 11.0;
+const ET_INPUT: f64 = 20.0;
 const ET_FOCUS: f64 = 21.0;
 const ET_BLUR: f64 = 22.0;
+const ET_BEFORE_INPUT: f64 = 23.0;
 const ET_COPY: f64 = 25.0;
 const ET_CUT: f64 = 26.0;
 const ET_PASTE: f64 = 27.0;
 
 /// Global JS dispatch functions, one per event payload shape. Each is invoked
 /// with primitive args instead of a serialized event object, so no serde round
-/// trip happens on the hot path. The matching event is constructed JS-side.
+/// trip happens on the hot path
 pub struct EventDispatch {
     mouse: v8::Global<v8::Function>,
     keyboard: v8::Global<v8::Function>,
@@ -613,6 +619,11 @@ impl EventDispatch {
             AppEvent::Click(e) => (&self.mouse, mouse_args(scope, ET_CLICK, e)),
             AppEvent::MouseDown(e) => (&self.mouse, mouse_args(scope, ET_MOUSE_DOWN, e)),
             AppEvent::MouseUp(e) => (&self.mouse, mouse_args(scope, ET_MOUSE_UP, e)),
+            AppEvent::MouseMove(e) => (&self.mouse, mouse_args(scope, ET_MOUSE_MOVE, e)),
+            AppEvent::MouseEnter(e) => (&self.mouse, mouse_args(scope, ET_MOUSE_ENTER, e)),
+            AppEvent::MouseLeave(e) => (&self.mouse, mouse_args(scope, ET_MOUSE_LEAVE, e)),
+            AppEvent::MouseOver(e) => (&self.mouse, mouse_args(scope, ET_MOUSE_OVER, e)),
+            AppEvent::MouseOut(e) => (&self.mouse, mouse_args(scope, ET_MOUSE_OUT, e)),
             AppEvent::KeyDown(e) => (&self.keyboard, keyboard_args(scope, ET_KEY_DOWN, e)),
             AppEvent::KeyUp(e) => (&self.keyboard, keyboard_args(scope, ET_KEY_UP, e)),
             AppEvent::Resize(e) => (
@@ -623,15 +634,8 @@ impl EventDispatch {
                     v_num(scope, e.height as f64),
                 ],
             ),
-            AppEvent::Input(e) => (
-                &self.input,
-                vec![
-                    v_num(scope, e.window_id as f64),
-                    v_node(scope, e.node_id),
-                    v_str(scope, &e.input_type),
-                    v_opt_str(scope, &e.data),
-                ],
-            ),
+            AppEvent::Input(e) => (&self.input, input_args(scope, ET_INPUT, e)),
+            AppEvent::BeforeInput(e) => (&self.input, input_args(scope, ET_BEFORE_INPUT, e)),
             AppEvent::Focus(e) => (&self.focus, focus_args(scope, ET_FOCUS, e)),
             AppEvent::Blur(e) => (&self.focus, focus_args(scope, ET_BLUR, e)),
             AppEvent::Copy(e) => (&self.clipboard, clipboard_args(scope, ET_COPY, e)),
@@ -725,10 +729,13 @@ fn mouse_args<'s>(
         v_node(scope, e.node_id),
         v_num(scope, e.x as f64),
         v_num(scope, e.y as f64),
+        v_num(scope, e.local_x as f64),
+        v_num(scope, e.local_y as f64),
         v_num(scope, e.screen_x as f64),
         v_num(scope, e.screen_y as f64),
         v_num(scope, e.button as f64),
         v_num(scope, e.buttons.bits() as f64),
+        v_opt_node(scope, e.related_node_id),
     ]
 }
 
@@ -746,6 +753,20 @@ fn keyboard_args<'s>(
         v_num(scope, e.key_code as f64),
         v_num(scope, e.modifiers.bits() as f64),
         v_bool(scope, e.repeat),
+    ]
+}
+
+fn input_args<'s>(
+    scope: &mut v8::PinScope<'s, '_>,
+    ty: f64,
+    e: &events::UzInputEvent,
+) -> Vec<v8::Local<'s, v8::Value>> {
+    vec![
+        v_num(scope, ty),
+        v_num(scope, e.window_id as f64),
+        v_node(scope, e.node_id),
+        v_str(scope, &e.input_type),
+        v_opt_str(scope, &e.data),
     ]
 }
 
@@ -813,17 +834,23 @@ fn handle_window_event(
             // Main has already updated `shared.scale_factor`
         }
         WindowEvent::CursorMoved { position, .. } => {
-            with_state(state, |s| {
-                if let Some(entry) = s.windows.get_mut(&wid) {
-                    let mouse_buttons = entry.mouse_buttons;
-                    let JsWindow { window, dom, .. } = entry;
-                    if let Some(window) = window
-                        && events::handle_cursor_moved(dom, window, position, mouse_buttons)
-                    {
-                        needs_redraw = true;
-                    }
+            let move_events = with_state(state, |s| {
+                let entry = s.windows.get_mut(&wid)?;
+                let mouse_buttons = entry.mouse_buttons;
+                let JsWindow { window, dom, .. } = entry;
+                let window = window.as_mut()?;
+                let (redraw, events) =
+                    events::handle_cursor_moved(dom, window, wid, position, mouse_buttons);
+                if redraw {
+                    needs_redraw = true;
                 }
+                Some(events)
             });
+            if let Some(events) = move_events {
+                for event in events {
+                    dispatch.dispatch(worker, &event);
+                }
+            }
         }
         WindowEvent::MouseInput {
             state: btn_state,
@@ -962,16 +989,35 @@ fn handle_window_event(
                     };
 
                     if !clipboard_consumed {
+                        // beforeinput fires before the edit commits; preventDefault
+                        // cancels it without touching the editor.
+                        let beforeinput = with_state_ref(state, |s| {
+                            s.windows.get(&wid).and_then(|entry| {
+                                events::build_beforeinput_event(
+                                    &entry.dom, wid, &key_event, modifiers,
+                                )
+                            })
+                        });
+                        let input_prevented = if let Some(ref evt) = beforeinput {
+                            dispatch.dispatch(worker, evt)
+                        } else {
+                            false
+                        };
+
                         let input_events = with_state(state, |s| {
                             s.windows.get_mut(&wid).map(|entry| {
                                 let window = entry.window.as_mut().unwrap();
-                                let (redraw, events) = events::handle_key_for_input(
-                                    &mut entry.dom,
-                                    window,
-                                    wid,
-                                    &key_event,
-                                    modifiers,
-                                );
+                                let (redraw, events) = if input_prevented {
+                                    (false, Vec::new())
+                                } else {
+                                    events::handle_key_for_input(
+                                        &mut entry.dom,
+                                        window,
+                                        wid,
+                                        &key_event,
+                                        modifiers,
+                                    )
+                                };
                                 let (checkbox_redraw, checkbox_events) =
                                     events::handle_key_for_checkbox(
                                         &mut entry.dom,

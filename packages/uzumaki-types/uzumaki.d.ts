@@ -148,11 +148,16 @@ declare module 'uzumaki' {
     MouseDown = 1,
     MouseUp = 2,
     Click = 3,
+    MouseEnter = 4,
+    MouseLeave = 5,
+    MouseOver = 6,
+    MouseOut = 7,
     KeyDown = 10,
     KeyUp = 11,
     Input = 20,
     Focus = 21,
     Blur = 22,
+    BeforeInput = 23,
     Copy = 25,
     Cut = 26,
     Paste = 27,
@@ -177,10 +182,18 @@ declare module 'uzumaki' {
   interface UzMouseEvent<T extends UzNode = UzNode> extends UzumakiEvent<T> {
     readonly x: number;
     readonly y: number;
+    /** Cursor position relative to the target element's top-left corner. */
+    readonly localX: number;
+    readonly localY: number;
     readonly screenX: number;
     readonly screenY: number;
     readonly button: number;
     readonly buttons: number;
+    /**
+     * The element the pointer entered from or exited to. Set for
+     * `mouseenter`/`mouseleave`/`mouseover`/`mouseout`; `null` otherwise.
+     */
+    readonly relatedTarget: UzNode | null;
   }
   interface UzKeyboardEvent<T extends UzNode = UzNode> extends UzumakiEvent<T> {
     readonly key: string;
@@ -193,7 +206,12 @@ declare module 'uzumaki' {
     readonly metaKey: boolean;
   }
   interface UzInputEvent<T extends UzNode = UzNode> extends UzumakiEvent<T> {
+    /**
+     * The kind of edit, e.g. `insertText`, `deleteContentBackward`,
+     * `historyUndo`. Matches the `input`/`beforeinput` `inputType` semantics.
+     */
     readonly inputType: string;
+    /** The inserted text, or `null` for deletions and history edits. */
     readonly data: string | null;
   }
   interface UzFocusEvent<T extends UzNode = UzNode> extends UzumakiEvent<T> {}
@@ -219,15 +237,37 @@ declare module 'uzumaki' {
   }
   /** DOM-style events that can be attached to any element. */
   interface UzEventMap {
+    /** Pointer moved over the element. Bubbles. */
     mousemove: UzMouseEvent;
+    /** A mouse button was pressed over the element. Bubbles. */
     mousedown: UzMouseEvent;
+    /** A mouse button was released over the element. Bubbles. */
     mouseup: UzMouseEvent;
+    /** A press and release landed on the same element. Bubbles. */
     click: UzMouseEvent;
+    /** Pointer entered the element. Fires per element; does not bubble. */
+    mouseenter: UzMouseEvent;
+    /** Pointer left the element. Fires per element; does not bubble. */
+    mouseleave: UzMouseEvent;
+    /** Pointer entered the element or a descendant. Bubbles. */
+    mouseover: UzMouseEvent;
+    /** Pointer left the element or a descendant. Bubbles. */
+    mouseout: UzMouseEvent;
+    /** A key was pressed while the element was focused. Bubbles. */
     keydown: UzKeyboardEvent;
+    /** A key was released while the element was focused. Bubbles. */
     keyup: UzKeyboardEvent;
+    /** The element's value changed. Bubbles. */
     input: UzInputEvent;
+    /**
+     * Fires before an edit is applied to an input. Call `preventDefault()` to
+     * stop the edit from committing. Bubbles.
+     */
+    beforeinput: UzInputEvent;
     change: UzInputEvent;
+    /** The element gained focus. Does not bubble. */
     focus: UzFocusEvent;
+    /** The element lost focus. Does not bubble. */
     blur: UzFocusEvent;
     copy: UzClipboardEvent;
     cut: UzClipboardEvent;

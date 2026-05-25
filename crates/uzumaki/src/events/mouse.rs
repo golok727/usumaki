@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use crate::layout::TaffyLayoutExt;
 use crate::node::{ScrollAxis, UzNodeId};
 use crate::selection::{Affinity, SelectionEndpoint, TextSelection};
@@ -9,13 +11,114 @@ use super::app_event::AppEvent;
 use super::text_input::{input_layout_meta, scroll_input_to_cursor, single_line_align_offset};
 use super::types::{MouseButtons, UzFocusEvent, UzInputEvent, UzMouseEvent};
 
+/// Cursor position relative to a node's top-left hitbox corner. Falls back to
+/// the window-relative coords when the node has no hitbox.
+pub(crate) fn local_offset(dom: &UIState, node_id: UzNodeId, x: f32, y: f32) -> (f32, f32) {
+    dom.nodes
+        .get(node_id)
+        .and_then(|n| n.hitbox_id)
+        .and_then(|hid| dom.hitbox_store.get(hid))
+        .map(|hb| (x - hb.bounds.x as f32, y - hb.bounds.y as f32))
+        .unwrap_or((x, y))
+}
+
+/// Node and its ancestors, innermost first, walking the parent chain to the root.
+fn ancestor_path(dom: &UIState, node_id: UzNodeId) -> Vec<UzNodeId> {
+    let mut path = Vec::new();
+    let mut current = Some(node_id);
+    while let Some(id) = current {
+        path.push(id);
+        current = dom.nodes.get(id).and_then(|n| n.parent);
+    }
+    path
+}
+
+fn hover_mouse_event(
+    dom: &UIState,
+    wid: u32,
+    node_id: UzNodeId,
+    x: f32,
+    y: f32,
+    related: Option<UzNodeId>,
+    buttons: MouseButtons,
+) -> UzMouseEvent {
+    let (local_x, local_y) = local_offset(dom, node_id, x, y);
+    UzMouseEvent {
+        window_id: wid,
+        node_id,
+        x,
+        y,
+        local_x,
+        local_y,
+        screen_x: x,
+        screen_y: y,
+        button: 0,
+        buttons,
+        related_node_id: related,
+    }
+}
+
+/// Emit mouseout/mouseover (bubbling) and mouseleave/mouseenter (per element)
+/// for a hover transition from `prev` to `current`. Each event carries
+/// coordinates relative to its own target, since Rust owns the node bounds.
+fn hover_transition_events(
+    dom: &UIState,
+    wid: u32,
+    prev: Option<UzNodeId>,
+    current: Option<UzNodeId>,
+    x: f32,
+    y: f32,
+    buttons: MouseButtons,
+) -> Vec<AppEvent> {
+    let mut events = Vec::new();
+    if prev == current {
+        return events;
+    }
+
+    let prev_path = prev.map(|id| ancestor_path(dom, id)).unwrap_or_default();
+    let target_path = current.map(|id| ancestor_path(dom, id)).unwrap_or_default();
+    let prev_set: HashSet<UzNodeId> = prev_path.iter().copied().collect();
+    let target_set: HashSet<UzNodeId> = target_path.iter().copied().collect();
+
+    if let Some(p) = prev {
+        events.push(AppEvent::MouseOut(hover_mouse_event(
+            dom, wid, p, x, y, current, buttons,
+        )));
+    }
+    if let Some(c) = current {
+        events.push(AppEvent::MouseOver(hover_mouse_event(
+            dom, wid, c, x, y, prev, buttons,
+        )));
+    }
+    // mouseleave: nodes no longer hovered, innermost first.
+    for id in &prev_path {
+        if !target_set.contains(id) {
+            events.push(AppEvent::MouseLeave(hover_mouse_event(
+                dom, wid, *id, x, y, current, buttons,
+            )));
+        }
+    }
+    // mouseenter: newly hovered nodes, outermost first.
+    for id in target_path.iter().rev() {
+        if !prev_set.contains(id) {
+            events.push(AppEvent::MouseEnter(hover_mouse_event(
+                dom, wid, *id, x, y, prev, buttons,
+            )));
+        }
+    }
+
+    events
+}
+
 pub fn handle_cursor_moved(
     dom: &mut UIState,
     handle: &mut Window,
+    wid: u32,
     position: winit::dpi::PhysicalPosition<f64>,
     mouse_buttons: MouseButtons,
-) -> bool {
+) -> (bool, Vec<AppEvent>) {
     let mut needs_redraw = false;
+    let mut events: Vec<AppEvent> = Vec::new();
     let scale = handle.scale_factor();
     let logical_x = position.x / scale;
     let logical_y = position.y / scale;
@@ -140,7 +243,37 @@ pub fn handle_cursor_moved(
         .unwrap_or(crate::cursor::UzCursorIcon::Default);
     handle.set_cursor(cursor);
 
-    needs_redraw
+    // Synthesize the boundary-crossing events (out/over/leave/enter) before the
+    // move, with per-target coordinates and relatedTarget resolved from the DOM.
+    let new_top = dom.hit_state.top_node;
+    events.extend(hover_transition_events(
+        dom,
+        wid,
+        old_top,
+        new_top,
+        logical_x as f32,
+        logical_y as f32,
+        mouse_buttons,
+    ));
+
+    if let Some(node_id) = new_top {
+        let (local_x, local_y) = local_offset(dom, node_id, logical_x as f32, logical_y as f32);
+        events.push(AppEvent::MouseMove(UzMouseEvent {
+            window_id: wid,
+            node_id,
+            x: logical_x as f32,
+            y: logical_y as f32,
+            local_x,
+            local_y,
+            screen_x: logical_x as f32,
+            screen_y: logical_y as f32,
+            button: 0,
+            buttons: mouse_buttons,
+            related_node_id: None,
+        }));
+    }
+
+    (needs_redraw, events)
 }
 
 /// Hit-test a mouse position against all text nodes in a textSelect run.
@@ -437,15 +570,19 @@ pub fn handle_mouse_input(
         ElementState::Pressed => {
             dom.set_active(press_target);
             if let Some(target) = target_node {
+                let (local_x, local_y) = local_offset(dom, target, x, y);
                 events.push(AppEvent::MouseDown(UzMouseEvent {
                     window_id: wid,
                     node_id: target,
                     x,
                     y,
+                    local_x,
+                    local_y,
                     screen_x: x,
                     screen_y: y,
                     button: button_num,
                     buttons: mouse_buttons,
+                    related_node_id: None,
                 }));
             }
 
@@ -671,15 +808,19 @@ pub fn handle_mouse_input(
         }
         ElementState::Released => {
             if let Some(target) = target_node {
+                let (local_x, local_y) = local_offset(dom, target, x, y);
                 events.push(AppEvent::MouseUp(UzMouseEvent {
                     window_id: wid,
                     node_id: target,
                     x,
                     y,
+                    local_x,
+                    local_y,
                     screen_x: x,
                     screen_y: y,
                     button: button_num,
                     buttons: mouse_buttons,
+                    related_node_id: None,
                 }));
             }
             // Click fires if released on the same element that was pressed
@@ -699,15 +840,19 @@ pub fn handle_mouse_input(
                     }));
                 }
                 if let Some(target) = target_node {
+                    let (local_x, local_y) = local_offset(dom, target, x, y);
                     events.push(AppEvent::Click(UzMouseEvent {
                         window_id: wid,
                         node_id: target,
                         x,
                         y,
+                        local_x,
+                        local_y,
                         screen_x: x,
                         screen_y: y,
                         button: button_num,
                         buttons: mouse_buttons,
+                        related_node_id: None,
                     }));
                 }
             }

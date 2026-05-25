@@ -80,12 +80,32 @@ export function dispatchDomEvent(
   if (!name) return false;
 
   const target = nodeAt(window, targetNodeId);
-  return dispatchEvent(
-    window,
-    name,
-    targetNodeId,
-    buildDomEvent(type, target, payload),
-  );
+  const event = buildDomEvent(type, target, payload);
+
+  // enter/leave fire on a single element with no capture/bubble; Rust already
+  // emits one event per crossed element, so route them straight to the node.
+  if (type === EventType.MouseEnter || type === EventType.MouseLeave) {
+    if (targetNodeId != null) fireDirect(window, name, targetNodeId, event);
+    return event.defaultPrevented;
+  }
+
+  return dispatchEvent(window, name, targetNodeId, event);
+}
+
+/** Fire a non-bubbling event on a single node, bypassing capture/bubble. */
+function fireDirect(
+  window: Window,
+  name: EventName,
+  nodeId: NodeId,
+  event: UzumakiEvent,
+): void {
+  const node = nodeAt(window, nodeId);
+  const emitter = eventNodeEmitter(node);
+  if (!emitter) return;
+  if ('_setTarget' in event) (event as any)._setTarget(node);
+  _setEventPhase(event, EventPhase.Target);
+  event.currentTarget = node;
+  fireEmitter(emitter, name, event, false);
 }
 
 export function dispatchEvent(

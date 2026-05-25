@@ -665,6 +665,76 @@ impl InputState {
         self.blink_reset.elapsed().as_millis() % Self::BLINK_CYCLE_MS
     }
 
+    /// Classify the edit a key would produce without applying it, so a
+    /// cancelable `beforeinput` can be dispatched first. Mirrors the
+    /// edit-producing branches of [`handle_key`](Self::handle_key); returns
+    /// `None` for keys that move the caret or are otherwise not edits.
+    pub fn preview_edit(
+        &self,
+        key: &Key,
+        modifiers: crate::events::KeyModifiers,
+    ) -> Option<(EditKind, Option<String>)> {
+        use crate::events::KeyModifiers;
+        if self.disabled {
+            return None;
+        }
+
+        let shift = modifiers.contains(KeyModifiers::SHIFT);
+        let ctrl = modifiers.contains(KeyModifiers::CTRL);
+
+        match key {
+            Key::Character(ch) => {
+                if ctrl {
+                    return match () {
+                        _ if ch.eq_ignore_ascii_case("z") && !shift => {
+                            Some((EditKind::HistoryUndo, None))
+                        }
+                        _ if (ch.eq_ignore_ascii_case("z") && shift)
+                            || ch.eq_ignore_ascii_case("y") =>
+                        {
+                            Some((EditKind::HistoryRedo, None))
+                        }
+                        _ => None,
+                    };
+                }
+                Some((EditKind::Insert, Some(ch.to_string())))
+            }
+            Key::Named(named) => match named {
+                NamedKey::Backspace if ctrl => Some((EditKind::DeleteWordBackward, None)),
+                NamedKey::Backspace => Some((EditKind::DeleteBackward, None)),
+                NamedKey::Delete if ctrl => Some((EditKind::DeleteWordForward, None)),
+                NamedKey::Delete => Some((EditKind::DeleteForward, None)),
+                NamedKey::Undo => Some((EditKind::HistoryUndo, None)),
+                NamedKey::Redo => Some((EditKind::HistoryRedo, None)),
+                NamedKey::Space => Some((EditKind::Insert, Some(" ".to_string()))),
+                NamedKey::Enter if self.multiline => {
+                    Some((EditKind::Insert, Some("\n".to_string())))
+                }
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Apply an edit previously classified by [`preview_edit`](Self::preview_edit).
+    fn apply_edit(
+        &mut self,
+        kind: EditKind,
+        data: Option<&str>,
+        renderer: &mut TextRenderer,
+    ) -> Option<EditEvent> {
+        match kind {
+            EditKind::Insert => self.insert_text(data.unwrap_or_default(), renderer),
+            EditKind::DeleteBackward => self.delete_backward(renderer),
+            EditKind::DeleteForward => self.delete_forward(renderer),
+            EditKind::DeleteWordBackward => self.delete_word_backward(renderer),
+            EditKind::DeleteWordForward => self.delete_word_forward(renderer),
+            EditKind::HistoryUndo => self.undo(renderer),
+            EditKind::HistoryRedo => self.redo(renderer),
+            EditKind::InsertFromPaste | EditKind::DeleteByCut => None,
+        }
+    }
+
     pub fn handle_key(
         &mut self,
         key: &Key,
@@ -682,45 +752,29 @@ impl InputState {
         let shift = modifiers.contains(KeyModifiers::SHIFT);
         let ctrl = modifiers.contains(KeyModifiers::CTRL);
 
-        let edit_or_handled = |opt: Option<EditEvent>| -> KeyResult {
-            opt.map_or(KeyResult::Handled, KeyResult::Edit)
-        };
-        let edit_or_ignored = |opt: Option<EditEvent>| -> KeyResult {
-            opt.map_or(KeyResult::Ignored, KeyResult::Edit)
-        };
+        // Edit-producing keys are classified once in `preview_edit` and applied
+        // here, so the two paths can never disagree. Enter is the only edit key
+        // that bubbles (Ignored) when it produces nothing.
+        if let Some((kind, data)) = self.preview_edit(key, modifiers) {
+            let edit = self.apply_edit(kind, data.as_deref(), renderer);
+            let empty = if matches!(key, Key::Named(NamedKey::Enter)) {
+                KeyResult::Ignored
+            } else {
+                KeyResult::Handled
+            };
+            return edit.map_or(empty, KeyResult::Edit);
+        }
 
         match key {
             Key::Character(ch) => {
-                if ctrl {
-                    return match () {
-                        _ if ch.eq_ignore_ascii_case("a") => {
-                            self.select_all(renderer);
-                            KeyResult::Handled
-                        }
-                        _ if ch.eq_ignore_ascii_case("z") && !shift => {
-                            edit_or_handled(self.undo(renderer))
-                        }
-                        _ if (ch.eq_ignore_ascii_case("z") && shift)
-                            || ch.eq_ignore_ascii_case("y") =>
-                        {
-                            edit_or_handled(self.redo(renderer))
-                        }
-                        _ => KeyResult::Ignored,
-                    };
+                if ctrl && ch.eq_ignore_ascii_case("a") {
+                    self.select_all(renderer);
+                    KeyResult::Handled
+                } else {
+                    KeyResult::Ignored
                 }
-                edit_or_handled(self.insert_text(ch, renderer))
             }
             Key::Named(named) => match named {
-                NamedKey::Backspace => edit_or_handled(if ctrl {
-                    self.delete_word_backward(renderer)
-                } else {
-                    self.delete_backward(renderer)
-                }),
-                NamedKey::Delete => edit_or_handled(if ctrl {
-                    self.delete_word_forward(renderer)
-                } else {
-                    self.delete_forward(renderer)
-                }),
                 NamedKey::ArrowLeft => {
                     let action = if ctrl {
                         MoveAction::WordLeft
@@ -765,12 +819,10 @@ impl InputState {
                     self.move_impl(action, shift, renderer);
                     KeyResult::Handled
                 }
-                NamedKey::Undo => edit_or_handled(self.undo(renderer)),
-                NamedKey::Redo => edit_or_handled(self.redo(renderer)),
-                NamedKey::Space => edit_or_handled(self.insert_text(" ", renderer)),
                 NamedKey::Escape => KeyResult::Blur,
-                NamedKey::Enter => edit_or_ignored(self.insert_text("\n", renderer)),
-                NamedKey::Tab => edit_or_ignored(self.insert_text("    ", renderer)),
+                NamedKey::Tab => self
+                    .insert_text("    ", renderer)
+                    .map_or(KeyResult::Ignored, KeyResult::Edit),
                 _ => KeyResult::Ignored,
             },
             _ => KeyResult::Ignored,
