@@ -100,6 +100,15 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve previous tag
+        id: prev_tag
+        run: |
+          current="${{ inputs.tag || github.ref_name }}"
+          previous=$(git tag --sort=-creatordate | grep -v "^${current}$" | head -n 1)
+          echo "previous=${previous}" >> "$GITHUB_OUTPUT"
 
       - name: Download artifacts
         uses: actions/download-artifact@v4
@@ -111,6 +120,7 @@ jobs:
         with:
           tag_name: ${{ inputs.tag || github.ref_name }}
           generate_release_notes: true
+          previous_tag_name: ${{ steps.prev_tag.outputs.previous }}
           files: |
             artifacts/windows-x64/uzumaki-windows-x64.zip
             artifacts/macos-x64/uzumaki-macos-x64.zip

@@ -1,0 +1,70 @@
+name: Version Bump
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Release type'
+        required: true
+        default: 'patch'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+          - prerelease
+      version:
+        description: 'Explicit version (e.g. 1.2.3). Overrides the release type when set.'
+        required: false
+        type: string
+      preid:
+        description: 'Prerelease identifier for pre* bumps.'
+        required: false
+        default: 'alpha'
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  bump:
+    name: Bump version and open PR
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Bump version
+        id: bump
+        run: pnpm bump "${{ inputs.version || inputs.bump }}" --preid "${{ inputs.preid }}"
+
+      - name: Open pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${{ steps.bump.outputs.version }}"
+          previous="${{ steps.bump.outputs.previous }}"
+          branch="release/${version}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "${branch}"
+          git commit -am "chore: release v${version}"
+          git push --force-with-lease origin "${branch}"
+
+          gh pr create \
+            --base "${{ github.ref_name }}" \
+            --head "${branch}" \
+            --title "chore: release v${version}" \
+            --body "Bumps version from \`${previous}\` to \`${version}\`. Tag \`v${version}\` after merge to publish the release."
