@@ -18,7 +18,7 @@
   "lint-staged": {
     "*.{js,jsx,ts,tsx,mjs}": [
       "prettier --ignore-unknown --write",
-      "oxlint --react-plugin --node-plugin --fix"
+      "oxlint --react-plugin --node-plugin --fix --no-error-on-unmatched-pattern"
     ],
     "*.{json,md,yml,yaml}": [
       "prettier --write"
