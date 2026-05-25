@@ -5,7 +5,10 @@ import semver from 'semver';
 const CLI_MANIFEST = 'crates/cli/Cargo.toml';
 
 const CARGO_MANIFESTS = ['crates/cli/Cargo.toml', 'crates/uzumaki/Cargo.toml'];
-const PACKAGE_JSONS = ['crates/uzumaki/package.json'];
+const PACKAGE_JSONS = [
+  'packages/uzumaki-react/package.json',
+  'packages/uzumaki-types/package.json',
+];
 
 const RELEASE_TYPES = [
   'major',

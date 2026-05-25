@@ -34,6 +34,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: pnpm/action-setup@v4
 
@@ -49,12 +51,19 @@ jobs:
         id: bump
         run: pnpm bump "${{ inputs.version || inputs.bump }}" --preid "${{ inputs.preid }}"
 
+      - name: Resolve previous tag
+        id: prev_tag
+        run: |
+          previous=$(git tag --sort=-creatordate | head -n 1)
+          echo "previous=${previous}" >> "$GITHUB_OUTPUT"
+
       - name: Open pull request
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           version="${{ steps.bump.outputs.version }}"
           previous="${{ steps.bump.outputs.previous }}"
+          prev_tag="${{ steps.prev_tag.outputs.previous }}"
           branch="release/${version}"
 
           git config user.name "github-actions[bot]"
@@ -63,8 +72,22 @@ jobs:
           git commit -am "chore: release v${version}"
           git push --force-with-lease origin "${branch}"
 
+          notes=$(gh api \
+            --method POST \
+            "repos/${{ github.repository }}/releases/generate-notes" \
+            -f tag_name="v${version}" \
+            -f target_commitish="${branch}" \
+            ${prev_tag:+-f previous_tag_name="${prev_tag}"} \
+            --jq '.body')
+
+          {
+            echo "Bumps version from \`${previous}\` to \`${version}\`. Tag \`v${version}\` after merge to publish the release."
+            echo
+            echo "${notes}"
+          } > pr-body.md
+
           gh pr create \
             --base "${{ github.ref_name }}" \
             --head "${branch}" \
             --title "chore: release v${version}" \
-            --body "Bumps version from \`${previous}\` to \`${version}\`. Tag \`v${version}\` after merge to publish the release."
+            --body-file pr-body.md
