@@ -670,22 +670,27 @@ fn replace_exe(current_exe: &Path, new_bytes: &[u8]) -> Result<()> {
         fs::set_permissions(tmp_file.path(), fs::Permissions::from_mode(0o755))?;
     }
 
-    let backup_path = current_exe.with_extension("old");
+    let new_exe = tmp_file
+        .into_temp_path()
+        .keep()
+        .context("failed to persist downloaded binary")?;
+
+    let backup_path = if cfg!(windows) {
+        current_exe.with_extension("old.exe")
+    } else {
+        current_exe.with_extension("old")
+    };
     let _ = fs::remove_file(&backup_path);
 
     fs::rename(current_exe, &backup_path)
         .with_context(|| format!("failed to move current exe to {}", backup_path.display()))?;
 
-    if let Err(e) = fs::rename(tmp_file.path(), current_exe) {
+    if let Err(e) = fs::rename(&new_exe, current_exe) {
         // Rollback
         let _ = fs::rename(&backup_path, current_exe);
+        let _ = fs::remove_file(&new_exe);
         return Err(e).context("failed to place new binary");
     }
-
-    tmp_file.into_temp_path().keep()?;
-
-    // Clean up backup
-    let _ = fs::remove_file(&backup_path);
 
     Ok(())
 }
