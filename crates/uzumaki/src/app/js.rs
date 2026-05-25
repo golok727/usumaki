@@ -365,7 +365,7 @@ fn run_js_thread(
         let context_local = v8::Local::new(scope, context);
         let global_obj = context_local.global(scope);
 
-        let dispatch = EventDispatch {
+        let dispatch = JSGlobalEventDispatch {
             mouse: get_global_fn(scope, global_obj, b"__uzumaki_dispatch_mouse__")?,
             keyboard: get_global_fn(scope, global_obj, b"__uzumaki_dispatch_keyboard__")?,
             input: get_global_fn(scope, global_obj, b"__uzumaki_dispatch_input__")?,
@@ -419,7 +419,7 @@ fn run_js_thread(
 async fn run_main_loop(
     worker: &mut MainWorker,
     state: &SharedJsState,
-    dispatch: &EventDispatch,
+    dispatch: &JSGlobalEventDispatch,
     animation_frame_fn: &v8::Global<v8::Function>,
     main_to_js: &flume::Receiver<MainToJs>,
 ) -> Result<()> {
@@ -457,7 +457,7 @@ fn handle_message(
     msg: MainToJs,
     worker: &mut MainWorker,
     state: &SharedJsState,
-    dispatch: &EventDispatch,
+    dispatch: &JSGlobalEventDispatch,
     animation_frame_fn: &v8::Global<v8::Function>,
 ) -> bool {
     match msg {
@@ -595,7 +595,7 @@ const ET_PASTE: f64 = 27.0;
 /// Global JS dispatch functions, one per event payload shape. Each is invoked
 /// with primitive args instead of a serialized event object, so no serde round
 /// trip happens on the hot path
-pub struct EventDispatch {
+pub struct JSGlobalEventDispatch {
     mouse: v8::Global<v8::Function>,
     keyboard: v8::Global<v8::Function>,
     input: v8::Global<v8::Function>,
@@ -608,7 +608,7 @@ pub struct EventDispatch {
     hot_reload: v8::Global<v8::Function>,
 }
 
-impl EventDispatch {
+impl JSGlobalEventDispatch {
     /// Returns true if `preventDefault()` was called on the dispatched event.
     pub fn dispatch(&self, worker: &mut MainWorker, event: &AppEvent) -> bool {
         deno_core::scope!(scope, &mut worker.js_runtime);
@@ -799,7 +799,7 @@ fn clipboard_args<'s>(
 fn handle_window_event(
     worker: &mut MainWorker,
     state: &SharedJsState,
-    dispatch: &EventDispatch,
+    dispatch: &JSGlobalEventDispatch,
     wid: WindowEntryId,
     event: winit::event::WindowEvent,
 ) {
