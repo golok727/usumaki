@@ -14,7 +14,7 @@
     "**/*.local.*",
     "**/dist/**",
     "crates/uzumaki/core/**",
-    "crates/uzumaki/js/generated/**"
+    "scripts/bump-version.js"
   ],
   "rules": {
     "constructor-super": "error",

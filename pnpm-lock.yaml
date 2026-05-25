@@ -9,7 +9,7 @@ importers:
     devDependencies:
       '@types/bun':
         specifier: latest
-        version: 1.3.13
+        version: 1.3.14
       husky:
         specifier: ^9.1.7
         version: 9.1.7
@@ -22,6 +22,9 @@ importers:
       prettier:
         specifier: ^3.8.1
         version: 3.8.3
+      semver:
+        specifier: ^7.8.0
+        version: 7.8.0
       tsdown:
         specifier: ^0.21.10
         version: 0.21.10(typescript@6.0.3)
@@ -1760,10 +1763,10 @@ packages:
         integrity: sha512-RoBvJ2X0wuKlWFIjrwffGw1IqZHKQqzIchKaadZZfnNpsAYp2mM0h36JtPCjNDAHGgYez/15uMBpfGwchhiMgg==,
       }
 
-  '@types/bun@1.3.13':
+  '@types/bun@1.3.14':
     resolution:
       {
-        integrity: sha512-9fqXWk5YIHGGnUau9TEi+qdlTYDAnOj+xLCmSTwXfAIqXr2x4tytJb43E9uCvt09zJURKXwAtkoH4nLQfzeTXw==,
+        integrity: sha512-h1hFqFVcvAvD9j9K7ZW7vd82aSA+rTdznZa+5bwvCwqSB1jmmfLcbIWhOLx1/+boy/xmjgCs/OMUL8hRJSmnPw==,
       }
 
   '@types/debug@4.1.13':
@@ -2126,10 +2129,10 @@ packages:
       }
     engines: { node: 18 || 20 || >=22 }
 
-  bun-types@1.3.13:
+  bun-types@1.3.14:
     resolution:
       {
-        integrity: sha512-QXKeHLlOLqQX9LgYaHJfzdBaV21T63HhFJnvuRCcjZiaUDpbs5ED1MgxbMra71CsryN/1dAoXuJJJwIv/2drVA==,
+        integrity: sha512-4N0ig0fEomHt5R0KCFWjovxow98rIoRwKolrYdCcknNwMekCXRnWEUvgu5soYV8QXtVsrUD8B95MBOZGPvr6KQ==,
       }
 
   cac@7.0.0:
@@ -4027,6 +4030,14 @@ packages:
     engines: { node: '>=10' }
     hasBin: true
 
+  semver@7.8.0:
+    resolution:
+      {
+        integrity: sha512-AcM7dV/5ul4EekoQ29Agm5vri8JNqRyj39o0qpX6vDF2GZrtutZl5RwgD1XnZjiTAfncsJhMI48QQH3sN87YNA==,
+      }
+    engines: { node: '>=10' }
+    hasBin: true
+
   sharp@0.34.5:
     resolution:
       {
@@ -5669,9 +5680,9 @@ snapshots:
       tslib: 2.8.1
     optional: true
 
-  '@types/bun@1.3.13':
+  '@types/bun@1.3.14':
     dependencies:
-      bun-types: 1.3.13
+      bun-types: 1.3.14
 
   '@types/debug@4.1.13':
     dependencies:
@@ -5957,7 +5968,7 @@ snapshots:
     dependencies:
       balanced-match: 4.0.4
 
-  bun-types@1.3.13:
+  bun-types@1.3.14:
     dependencies:
       '@types/node': 25.6.2
 
@@ -7501,6 +7512,8 @@ snapshots:
 
   semver@7.7.4: {}
 
+  semver@7.8.0: {}
+
   sharp@0.34.5:
     dependencies:
       '@img/colour': 1.1.0
@@ -7660,7 +7673,7 @@ snapshots:
       picomatch: 4.0.4
       rolldown: 1.0.0-rc.17
       rolldown-plugin-dts: 0.23.2(rolldown@1.0.0-rc.17)(typescript@6.0.3)
-      semver: 7.7.4
+      semver: 7.8.0
       tinyexec: 1.1.2
       tinyglobby: 0.2.16
       tree-kill: 1.2.2

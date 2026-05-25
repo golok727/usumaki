@@ -12,6 +12,7 @@
     "lint": "oxlint --react-plugin --node-plugin .",
     "typecheck": "pnpm -r typecheck",
     "gen:types": "node scripts/generate-types.js",
+    "bump": "node scripts/bump-version.js",
     "lint:fix": "oxlint --react-plugin --node-plugin --fix .",
     "prepare": "husky"
   },
@@ -34,6 +35,7 @@
     "lint-staged": "^16.4.0",
     "oxlint": "^1.59.0",
     "prettier": "^3.8.1",
+    "semver": "^7.8.0",
     "tsdown": "^0.21.10",
     "typescript": "^6.0.2"
   }
