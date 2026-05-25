@@ -6,8 +6,6 @@ import {
   AppPath as CoreAppPath,
   // @ts-expect-error it is what it is
 } from 'ext:core/ops';
-import { dispatchAppEvent, onAppEvent } from 'ext:uzumaki/core.ts';
-
 import 'ext:uzumaki/types.ts';
 import 'ext:uzumaki/window.ts';
 import 'ext:uzumaki/events.ts';
@@ -83,83 +81,136 @@ export type {
   UzumakiResizeEvent,
 } from 'ext:uzumaki/events.ts';
 
-const EVENT_TYPE_MAP: Record<string, UzEventType> = {
-  mouseDown: UzEventType.MouseDown,
-  mouseUp: UzEventType.MouseUp,
-  click: UzEventType.Click,
-  keyDown: UzEventType.KeyDown,
-  keyUp: UzEventType.KeyUp,
-  input: UzEventType.Input,
-  focus: UzEventType.Focus,
-  blur: UzEventType.Blur,
-  copy: UzEventType.Copy,
-  cut: UzEventType.Cut,
-  paste: UzEventType.Paste,
-};
-
-ObjectDefineProperty(globalThis, '__uzumaki_on_app_event__', {
-  value: function (event: any /** Todo type */) {
-    return dispatchAppEvent(event);
-  },
-  writable: false,
-  configurable: false,
-});
-
 ObjectDefineProperty(globalThis, '__uzumaki_flush_animation_frame__', {
   value: flushAnimationFrameCallbacks,
   writable: false,
   configurable: false,
 });
 
-/**
- * Subscribe
- */
-onAppEvent((event: AppEvent, ctx) => {
-  if (event.type === 'windowLoad') {
-    const w = Window._getById(event.windowId);
-    if (w) w._dispatchLifecycle('load');
-    return;
+function defineDispatch(name: string, fn: (...args: any[]) => unknown): void {
+  ObjectDefineProperty(globalThis, name, {
+    value: fn,
+    writable: false,
+    configurable: false,
+  });
+}
+
+function dispatchToNode(
+  windowId: number,
+  type: UzEventType,
+  nodeId: number | null,
+  payload: any,
+): boolean {
+  const w = Window._getById(windowId);
+  if (!w) return false;
+  return dispatchDomEvent(w, type, nodeId, payload);
+}
+
+defineDispatch(
+  '__uzumaki_dispatch_mouse__',
+  (
+    type: UzEventType,
+    windowId: number,
+    nodeId: number,
+    x: number,
+    y: number,
+    screenX: number,
+    screenY: number,
+    button: number,
+    buttons: number,
+  ) =>
+    dispatchToNode(windowId, type, nodeId, {
+      x,
+      y,
+      screenX,
+      screenY,
+      button,
+      buttons,
+    }),
+);
+
+defineDispatch(
+  '__uzumaki_dispatch_keyboard__',
+  (
+    type: UzEventType,
+    windowId: number,
+    nodeId: number | null,
+    key: string,
+    code: string,
+    keyCode: number,
+    modifiers: number,
+    repeat: boolean,
+  ) =>
+    dispatchToNode(windowId, type, nodeId, {
+      key,
+      code,
+      keyCode,
+      modifiers,
+      repeat,
+    }),
+);
+
+defineDispatch(
+  '__uzumaki_dispatch_input__',
+  (windowId: number, nodeId: number, inputType: string, data: string | null) =>
+    dispatchToNode(windowId, UzEventType.Input, nodeId, {
+      inputType,
+      data,
+    }),
+);
+
+defineDispatch(
+  '__uzumaki_dispatch_focus__',
+  (type: UzEventType, windowId: number, nodeId: number) =>
+    dispatchToNode(windowId, type, nodeId, {}),
+);
+
+defineDispatch(
+  '__uzumaki_dispatch_clipboard__',
+  (
+    type: UzEventType,
+    windowId: number,
+    nodeId: number | null,
+    selectionText: string | null,
+    clipboardText: string | null,
+  ) =>
+    dispatchToNode(windowId, type, nodeId, {
+      selectionText,
+      clipboardText,
+    }),
+);
+
+defineDispatch(
+  '__uzumaki_dispatch_resize__',
+  (windowId: number, width: number, height: number) => {
+    const w = Window._getById(windowId);
+    if (w) w._dispatchLifecycle('resize', { width, height });
+  },
+);
+
+defineDispatch('__uzumaki_window_load__', (windowId: number) => {
+  const w = Window._getById(windowId);
+  if (w) w._dispatchLifecycle('load');
+});
+
+defineDispatch('__uzumaki_window_close__', (windowId: number) => {
+  const w = Window._getById(windowId);
+  if (w) {
+    w._dispatchLifecycle('close');
+    disposeWindow(w);
   }
+});
 
-  if (event.type === 'windowClose') {
-    const w = Window._getById(event.windowId);
-    if (w) {
-      w._dispatchLifecycle('close');
-      disposeWindow(w);
-    }
-    return;
-  }
+defineDispatch(
+  '__uzumaki_theme_changed__',
+  (windowId: number, isDark: boolean) => {
+    const w = Window._getById(windowId);
+    if (w) w._onSystemThemeChange(isDark ? 'dark' : 'light');
+  },
+);
 
-  if (event.type === 'resize') {
-    const w = Window._getById(event.windowId);
-    if (w) {
-      w._dispatchLifecycle('resize', {
-        width: event.width ?? 0,
-        height: event.height ?? 0,
-      });
-    }
-    return;
-  }
-
-  if (event.type === 'themeChanged') {
-    const w = Window._getById(event.windowId);
-    if (w) w._onSystemThemeChange(event.theme === 'dark' ? 'dark' : 'light');
-    return;
-  }
-
-  if (event.type === 'hotReload') {
-    console.log('[uzumaki] Hot reload');
-    return;
-  }
-
-  const eventType = EVENT_TYPE_MAP[event.type];
-  if (eventType === undefined) return;
-
-  const w = Window._getById(event.windowId);
-  if (!w) return;
-
-  const prevented = dispatchDomEvent(w, eventType, event.nodeId ?? null, event);
-  if (prevented) ctx.preventDefault();
+defineDispatch('__uzumaki_hot_reload__', () => {
+  console.log('[uzumaki] Hot reload');
 });
 
 /**
@@ -184,26 +235,3 @@ export function defineVars<T extends Record<string, string>>(
 }
 
 export const RUNTIME_VERSION: number = op_get_uz_runtime_version();
-
-interface AppEvent {
-  type: string;
-  windowId: number;
-  nodeId?: any;
-  key?: string;
-  code?: string;
-  keyCode?: number;
-  modifiers?: number;
-  repeat?: boolean;
-  width?: number;
-  height?: number;
-  x?: number;
-  y?: number;
-  screenX?: number;
-  screenY?: number;
-  button?: number;
-  buttons?: number;
-  value?: string;
-  inputType?: string;
-  data?: string | null;
-  theme?: string;
-}

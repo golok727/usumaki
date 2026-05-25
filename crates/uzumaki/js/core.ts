@@ -119,50 +119,6 @@ interface Core {
   getAncestorPath(windowId: number, nodeId: NodeId): NodeId[];
   readClipboardText(): Promise<string | null>;
   writeClipboardText(text: string): Promise<boolean>;
-  onAppEvent(
-    handler: (
-      event: any,
-      ctx: { preventDefault(): void; readonly defaultPrevented: boolean },
-    ) => void,
-  ): () => void;
-}
-
-const appEventSubscribers: Array<(...args: any[]) => void> = [];
-
-export function onAppEvent(handler: (...args: any[]) => void) {
-  if (typeof handler !== 'function') {
-    throw new TypeError('onAppEvent expects a function');
-  }
-  appEventSubscribers.push(handler);
-  return function dispose() {
-    const idx = appEventSubscribers.indexOf(handler);
-    if (idx !== -1) appEventSubscribers.splice(idx, 1);
-  };
-}
-
-export function dispatchAppEvent(event: any) {
-  let prevented = false;
-  const ctx = {
-    preventDefault() {
-      prevented = true;
-    },
-    get defaultPrevented() {
-      return prevented;
-    },
-  };
-  const subs = [...appEventSubscribers];
-  for (let i = 0; i < subs.length; i++) {
-    try {
-      subs[i]?.(event, ctx);
-    } catch (error) {
-      if (error instanceof Error) {
-        console.error(error);
-      } else {
-        console.error('Error', error);
-      }
-    }
-  }
-  return prevented;
 }
 
 const core: Core = {
@@ -179,7 +135,6 @@ const core: Core = {
   getAncestorPath: op_get_ancestor_path,
   readClipboardText: op_read_clipboard_text,
   writeClipboardText: op_write_clipboard_text,
-  onAppEvent,
 };
 
 export default core;

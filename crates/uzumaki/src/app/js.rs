@@ -359,30 +359,27 @@ fn run_js_thread(
         })?
     };
 
-    let (global_dispatch_fn, animation_frame_fn) = {
+    let (event_dispatch, animation_frame_fn) = {
         let context = worker.js_runtime.main_context();
         deno_core::scope!(scope, &mut worker.js_runtime);
         let context_local = v8::Local::new(scope, context);
         let global_obj = context_local.global(scope);
 
-        let key = v8::String::new_external_onebyte_static(scope, b"__uzumaki_on_app_event__")
-            .ok_or_else(|| anyhow::anyhow!("failed to create v8 string"))?;
-        let val = global_obj
-            .get(scope, key.into())
-            .ok_or_else(|| anyhow::anyhow!("__uzumaki_on_app_event__ not found on globalThis"))?;
-        let func = v8::Local::<v8::Function>::try_from(val)
-            .map_err(|_| anyhow::anyhow!("__uzumaki_on_app_event__ is not a function"))?;
-        let dispatch = v8::Global::new(scope, func);
+        let dispatch = EventDispatch {
+            mouse: get_global_fn(scope, global_obj, b"__uzumaki_dispatch_mouse__")?,
+            keyboard: get_global_fn(scope, global_obj, b"__uzumaki_dispatch_keyboard__")?,
+            input: get_global_fn(scope, global_obj, b"__uzumaki_dispatch_input__")?,
+            focus: get_global_fn(scope, global_obj, b"__uzumaki_dispatch_focus__")?,
+            clipboard: get_global_fn(scope, global_obj, b"__uzumaki_dispatch_clipboard__")?,
+            resize: get_global_fn(scope, global_obj, b"__uzumaki_dispatch_resize__")?,
+            window_load: get_global_fn(scope, global_obj, b"__uzumaki_window_load__")?,
+            window_close: get_global_fn(scope, global_obj, b"__uzumaki_window_close__")?,
+            theme_changed: get_global_fn(scope, global_obj, b"__uzumaki_theme_changed__")?,
+            hot_reload: get_global_fn(scope, global_obj, b"__uzumaki_hot_reload__")?,
+        };
 
-        let key =
-            v8::String::new_external_onebyte_static(scope, b"__uzumaki_flush_animation_frame__")
-                .ok_or_else(|| anyhow::anyhow!("failed to create v8 string"))?;
-        let val = global_obj.get(scope, key.into()).ok_or_else(|| {
-            anyhow::anyhow!("__uzumaki_flush_animation_frame__ not found on globalThis")
-        })?;
-        let func = v8::Local::<v8::Function>::try_from(val)
-            .map_err(|_| anyhow::anyhow!("__uzumaki_flush_animation_frame__ is not a function"))?;
-        let animation_frame = v8::Global::new(scope, func);
+        let animation_frame =
+            get_global_fn(scope, global_obj, b"__uzumaki_flush_animation_frame__")?;
 
         (dispatch, animation_frame)
     };
@@ -411,7 +408,7 @@ fn run_js_thread(
         run_main_loop(
             &mut worker,
             &state,
-            &global_dispatch_fn,
+            &event_dispatch,
             &animation_frame_fn,
             &main_to_js,
         )
@@ -422,7 +419,7 @@ fn run_js_thread(
 async fn run_main_loop(
     worker: &mut MainWorker,
     state: &SharedJsState,
-    dispatch_fn: &v8::Global<v8::Function>,
+    dispatch: &EventDispatch,
     animation_frame_fn: &v8::Global<v8::Function>,
     main_to_js: &flume::Receiver<MainToJs>,
 ) -> Result<()> {
@@ -431,7 +428,7 @@ async fn run_main_loop(
             biased;
             msg = main_to_js.recv_async() => {
                 let Ok(msg) = msg else { break };
-                if !handle_message(msg, worker, state, dispatch_fn, animation_frame_fn) {
+                if !handle_message(msg, worker, state, dispatch, animation_frame_fn) {
                     break;
                 }
             }
@@ -443,7 +440,7 @@ async fn run_main_loop(
                 // message. We don't re-enter `run_event_loop` because it
                 // would return immediately and busy-loop.
                 let Ok(msg) = main_to_js.recv_async().await else { break };
-                if !handle_message(msg, worker, state, dispatch_fn, animation_frame_fn) {
+                if !handle_message(msg, worker, state, dispatch, animation_frame_fn) {
                     break;
                 }
             }
@@ -460,7 +457,7 @@ fn handle_message(
     msg: MainToJs,
     worker: &mut MainWorker,
     state: &SharedJsState,
-    dispatch_fn: &v8::Global<v8::Function>,
+    dispatch: &EventDispatch,
     animation_frame_fn: &v8::Global<v8::Function>,
 ) -> bool {
     match msg {
@@ -481,18 +478,16 @@ fn handle_message(
                     Theme::Dark => "dark",
                     Theme::Light => "light",
                 };
-                dispatch_event_to_js(
+                dispatch.dispatch(
                     worker,
-                    dispatch_fn,
                     &AppEvent::ThemeChanged(events::UzThemeEvent {
                         window_id: id,
                         theme: theme.to_string(),
                     }),
                 );
             }
-            dispatch_event_to_js(
+            dispatch.dispatch(
                 worker,
-                dispatch_fn,
                 &AppEvent::WindowLoad(events::UzWindowEvent { window_id: id }),
             );
         }
@@ -503,7 +498,7 @@ fn handle_message(
             let _ = proxy.send_event(UserEvent::FrameReady { id });
         }
         MainToJs::WindowEvent { id, event } => {
-            handle_window_event(worker, state, dispatch_fn, id, event);
+            handle_window_event(worker, state, dispatch, id, event);
         }
         MainToJs::CursorBlink { id, generation } => {
             handle_cursor_blink(state, id, generation);
@@ -577,48 +572,213 @@ fn flush_external_memory(worker: &mut MainWorker, state: &SharedJsState) {
     }
 }
 
-/// Returns true if `preventDefault()` was called on the dispatched event.
-pub fn dispatch_event_to_js(
-    worker: &mut MainWorker,
-    dispatch_fn: &v8::Global<v8::Function>,
-    event: &AppEvent,
-) -> bool {
-    let context = worker.js_runtime.main_context();
-    deno_core::scope!(scope, &mut worker.js_runtime);
-    v8::tc_scope!(scope, scope);
+/// Numeric `EventType` discriminators, mirroring the `EventType` enum in
+/// `js/events.ts`. Passed to the JS dispatch functions so they can build the
+/// DOM event without a serialized `type` field.
+const ET_MOUSE_DOWN: f64 = 1.0;
+const ET_MOUSE_UP: f64 = 2.0;
+const ET_CLICK: f64 = 3.0;
+const ET_KEY_DOWN: f64 = 10.0;
+const ET_KEY_UP: f64 = 11.0;
+const ET_FOCUS: f64 = 21.0;
+const ET_BLUR: f64 = 22.0;
+const ET_COPY: f64 = 25.0;
+const ET_CUT: f64 = 26.0;
+const ET_PASTE: f64 = 27.0;
 
-    let context_local = v8::Local::new(scope, context);
-    let _global_obj = context_local.global(scope);
+/// Global JS dispatch functions, one per event payload shape. Each is invoked
+/// with primitive args instead of a serialized event object, so no serde round
+/// trip happens on the hot path. The matching event is constructed JS-side.
+pub struct EventDispatch {
+    mouse: v8::Global<v8::Function>,
+    keyboard: v8::Global<v8::Function>,
+    input: v8::Global<v8::Function>,
+    focus: v8::Global<v8::Function>,
+    clipboard: v8::Global<v8::Function>,
+    resize: v8::Global<v8::Function>,
+    window_load: v8::Global<v8::Function>,
+    window_close: v8::Global<v8::Function>,
+    theme_changed: v8::Global<v8::Function>,
+    hot_reload: v8::Global<v8::Function>,
+}
 
-    let func = v8::Local::new(scope, dispatch_fn);
-    let undefined = v8::undefined(scope);
+impl EventDispatch {
+    /// Returns true if `preventDefault()` was called on the dispatched event.
+    pub fn dispatch(&self, worker: &mut MainWorker, event: &AppEvent) -> bool {
+        deno_core::scope!(scope, &mut worker.js_runtime);
+        v8::tc_scope!(scope, scope);
+        let undefined: v8::Local<v8::Value> = v8::undefined(scope).into();
 
-    let event_val = match deno_core::serde_v8::to_v8(scope, event) {
-        Ok(val) => val,
-        Err(e) => {
-            eprintln!(
-                "{} failed to serialize event: {e}",
-                crate::terminal_colors::red_bold("Error")
-            );
+        let (func, args): (&v8::Global<v8::Function>, Vec<v8::Local<v8::Value>>) = match event {
+            AppEvent::Click(e) => (&self.mouse, mouse_args(scope, ET_CLICK, e)),
+            AppEvent::MouseDown(e) => (&self.mouse, mouse_args(scope, ET_MOUSE_DOWN, e)),
+            AppEvent::MouseUp(e) => (&self.mouse, mouse_args(scope, ET_MOUSE_UP, e)),
+            AppEvent::KeyDown(e) => (&self.keyboard, keyboard_args(scope, ET_KEY_DOWN, e)),
+            AppEvent::KeyUp(e) => (&self.keyboard, keyboard_args(scope, ET_KEY_UP, e)),
+            AppEvent::Resize(e) => (
+                &self.resize,
+                vec![
+                    v_num(scope, e.window_id as f64),
+                    v_num(scope, e.width as f64),
+                    v_num(scope, e.height as f64),
+                ],
+            ),
+            AppEvent::Input(e) => (
+                &self.input,
+                vec![
+                    v_num(scope, e.window_id as f64),
+                    v_node(scope, e.node_id),
+                    v_str(scope, &e.input_type),
+                    v_opt_str(scope, &e.data),
+                ],
+            ),
+            AppEvent::Focus(e) => (&self.focus, focus_args(scope, ET_FOCUS, e)),
+            AppEvent::Blur(e) => (&self.focus, focus_args(scope, ET_BLUR, e)),
+            AppEvent::Copy(e) => (&self.clipboard, clipboard_args(scope, ET_COPY, e)),
+            AppEvent::Cut(e) => (&self.clipboard, clipboard_args(scope, ET_CUT, e)),
+            AppEvent::Paste(e) => (&self.clipboard, clipboard_args(scope, ET_PASTE, e)),
+            AppEvent::WindowLoad(e) => (&self.window_load, vec![v_num(scope, e.window_id as f64)]),
+            AppEvent::WindowClose(e) => {
+                (&self.window_close, vec![v_num(scope, e.window_id as f64)])
+            }
+            AppEvent::ThemeChanged(e) => (
+                &self.theme_changed,
+                vec![
+                    v_num(scope, e.window_id as f64),
+                    v_bool(scope, e.theme == "dark"),
+                ],
+            ),
+            AppEvent::HotReload => (&self.hot_reload, vec![]),
+        };
+
+        let func = v8::Local::new(scope, func);
+        let result = func.call(scope, undefined, &args);
+
+        if let Some(exception) = scope.exception() {
+            let error = deno_core::error::JsError::from_v8_exception(scope, exception);
+            eprintln!("{} {error}", crate::terminal_colors::red_bold("Error"));
             return false;
         }
-    };
 
-    let result = func.call(scope, undefined.into(), &[event_val]);
-
-    if let Some(exception) = scope.exception() {
-        let error = deno_core::error::JsError::from_v8_exception(scope, exception);
-        eprintln!("{} {error}", crate::terminal_colors::red_bold("Error"));
-        return false;
+        result.map(|v| v.is_true()).unwrap_or(false)
     }
+}
 
-    result.map(|v| v.is_true()).unwrap_or(false)
+fn get_global_fn(
+    scope: &mut v8::PinScope<'_, '_>,
+    global: v8::Local<v8::Object>,
+    name: &'static [u8],
+) -> Result<v8::Global<v8::Function>> {
+    let key = v8::String::new_external_onebyte_static(scope, name)
+        .ok_or_else(|| anyhow::anyhow!("failed to create v8 string"))?;
+    let val = global.get(scope, key.into()).ok_or_else(|| {
+        anyhow::anyhow!("{} not found on globalThis", String::from_utf8_lossy(name))
+    })?;
+    let func = v8::Local::<v8::Function>::try_from(val)
+        .map_err(|_| anyhow::anyhow!("{} is not a function", String::from_utf8_lossy(name)))?;
+    Ok(v8::Global::new(scope, func))
+}
+
+fn v_num<'s>(scope: &mut v8::PinScope<'s, '_>, n: f64) -> v8::Local<'s, v8::Value> {
+    v8::Number::new(scope, n).into()
+}
+
+fn v_bool<'s>(scope: &mut v8::PinScope<'s, '_>, b: bool) -> v8::Local<'s, v8::Value> {
+    v8::Boolean::new(scope, b).into()
+}
+
+fn v_str<'s>(scope: &mut v8::PinScope<'s, '_>, s: &str) -> v8::Local<'s, v8::Value> {
+    v8::String::new(scope, s)
+        .map(|v| v.into())
+        .unwrap_or_else(|| v8::undefined(scope).into())
+}
+
+fn v_opt_str<'s>(scope: &mut v8::PinScope<'s, '_>, s: &Option<String>) -> v8::Local<'s, v8::Value> {
+    match s {
+        Some(s) => v_str(scope, s),
+        None => v8::null(scope).into(),
+    }
+}
+
+fn v_node<'s>(scope: &mut v8::PinScope<'s, '_>, id: UzNodeId) -> v8::Local<'s, v8::Value> {
+    v8::Number::new(scope, id as f64).into()
+}
+
+fn v_opt_node<'s>(
+    scope: &mut v8::PinScope<'s, '_>,
+    id: Option<UzNodeId>,
+) -> v8::Local<'s, v8::Value> {
+    match id {
+        Some(id) => v_node(scope, id),
+        None => v8::null(scope).into(),
+    }
+}
+
+fn mouse_args<'s>(
+    scope: &mut v8::PinScope<'s, '_>,
+    ty: f64,
+    e: &events::UzMouseEvent,
+) -> Vec<v8::Local<'s, v8::Value>> {
+    vec![
+        v_num(scope, ty),
+        v_num(scope, e.window_id as f64),
+        v_node(scope, e.node_id),
+        v_num(scope, e.x as f64),
+        v_num(scope, e.y as f64),
+        v_num(scope, e.screen_x as f64),
+        v_num(scope, e.screen_y as f64),
+        v_num(scope, e.button as f64),
+        v_num(scope, e.buttons.bits() as f64),
+    ]
+}
+
+fn keyboard_args<'s>(
+    scope: &mut v8::PinScope<'s, '_>,
+    ty: f64,
+    e: &events::UzKeyboardEvent,
+) -> Vec<v8::Local<'s, v8::Value>> {
+    vec![
+        v_num(scope, ty),
+        v_num(scope, e.window_id as f64),
+        v_opt_node(scope, e.node_id),
+        v_str(scope, &e.key),
+        v_str(scope, &e.code),
+        v_num(scope, e.key_code as f64),
+        v_num(scope, e.modifiers.bits() as f64),
+        v_bool(scope, e.repeat),
+    ]
+}
+
+fn focus_args<'s>(
+    scope: &mut v8::PinScope<'s, '_>,
+    ty: f64,
+    e: &events::UzFocusEvent,
+) -> Vec<v8::Local<'s, v8::Value>> {
+    vec![
+        v_num(scope, ty),
+        v_num(scope, e.window_id as f64),
+        v_node(scope, e.node_id),
+    ]
+}
+
+fn clipboard_args<'s>(
+    scope: &mut v8::PinScope<'s, '_>,
+    ty: f64,
+    e: &events::UzClipboardEvent,
+) -> Vec<v8::Local<'s, v8::Value>> {
+    vec![
+        v_num(scope, ty),
+        v_num(scope, e.window_id as f64),
+        v_opt_node(scope, e.node_id),
+        v_opt_str(scope, &e.selection_text),
+        v_opt_str(scope, &e.clipboard_text),
+    ]
 }
 
 fn handle_window_event(
     worker: &mut MainWorker,
     state: &SharedJsState,
-    dispatch_fn: &v8::Global<v8::Function>,
+    dispatch: &EventDispatch,
     wid: WindowEntryId,
     event: winit::event::WindowEvent,
 ) {
@@ -639,9 +799,8 @@ fn handle_window_event(
                 && w > 0
                 && h > 0
             {
-                dispatch_event_to_js(
+                dispatch.dispatch(
                     worker,
-                    dispatch_fn,
                     &AppEvent::Resize(events::UzResizeEvent {
                         window_id: wid,
                         width: w,
@@ -702,7 +861,7 @@ fn handle_window_event(
 
             if let Some(events) = events {
                 for event in events {
-                    dispatch_event_to_js(worker, dispatch_fn, &event);
+                    dispatch.dispatch(worker, &event);
                 }
             }
         }
@@ -720,7 +879,7 @@ fn handle_window_event(
             });
 
             let prevented = if let Some(ref evt) = raw_event {
-                dispatch_event_to_js(worker, dispatch_fn, evt)
+                dispatch.dispatch(worker, evt)
             } else {
                 false
             };
@@ -739,7 +898,7 @@ fn handle_window_event(
                             needs_redraw = true;
                         }
                         for event in &outcome.events {
-                            dispatch_event_to_js(worker, dispatch_fn, event);
+                            dispatch.dispatch(worker, event);
                         }
                         outcome.consumed
                     } else {
@@ -759,8 +918,7 @@ fn handle_window_event(
                         true
                     } else if let Some(cmd) = clipboard_cmd {
                         let clipboard_event = events::clipboard_command_to_event(&cmd, wid);
-                        let clipboard_prevented =
-                            dispatch_event_to_js(worker, dispatch_fn, &clipboard_event);
+                        let clipboard_prevented = dispatch.dispatch(worker, &clipboard_event);
 
                         if !clipboard_prevented {
                             let (redraw, follow_up_events) = with_state(state, |s| {
@@ -786,7 +944,7 @@ fn handle_window_event(
                                 needs_redraw = true;
                             }
                             for event in follow_up_events {
-                                dispatch_event_to_js(worker, dispatch_fn, &event);
+                                dispatch.dispatch(worker, &event);
                             }
                             if needs_redraw {
                                 with_state(state, |s| {
@@ -834,7 +992,7 @@ fn handle_window_event(
 
                         if let Some(events) = input_events {
                             for event in events {
-                                dispatch_event_to_js(worker, dispatch_fn, &event);
+                                dispatch.dispatch(worker, &event);
                             }
                         }
 
@@ -906,9 +1064,8 @@ fn handle_window_event(
                 Theme::Dark => "dark",
                 Theme::Light => "light",
             };
-            dispatch_event_to_js(
+            dispatch.dispatch(
                 worker,
-                dispatch_fn,
                 &AppEvent::ThemeChanged(events::UzThemeEvent {
                     window_id: wid,
                     theme: theme.to_string(),
@@ -952,7 +1109,7 @@ fn handle_window_event(
                 });
                 if let Some(events) = input_events {
                     for event in events {
-                        dispatch_event_to_js(worker, dispatch_fn, &event);
+                        dispatch.dispatch(worker, &event);
                     }
                 }
                 refresh_blink_timer = true;
@@ -1024,9 +1181,8 @@ fn handle_window_event(
             });
         }
         WindowEvent::CloseRequested => {
-            dispatch_event_to_js(
+            dispatch.dispatch(
                 worker,
-                dispatch_fn,
                 &AppEvent::WindowClose(events::UzWindowEvent { window_id: wid }),
             );
             // Drop the native window handle so the OS window goes away
