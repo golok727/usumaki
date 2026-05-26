@@ -482,7 +482,7 @@ impl<'a> Painter<'a> {
     }
 
     fn prepare_view_scroll(
-        &mut self,
+        &self,
         node_id: UzNodeId,
         style: &UzStyle,
         layout: &taffy::Layout,
@@ -552,7 +552,7 @@ impl<'a> Painter<'a> {
 
     #[allow(clippy::too_many_arguments)]
     fn register_view_thumb(
-        &mut self,
+        &self,
         node_id: UzNodeId,
         axis: ScrollAxis,
         view_bounds: Bounds,
