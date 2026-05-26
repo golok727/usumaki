@@ -555,6 +555,7 @@ fn build_frame(state: &SharedJsState, id: WindowEntryId) {
 
         let mut scene = vello::Scene::new();
         dom.compute_layout(pw as f32, ph as f32, &mut window.text_renderer, scale);
+        dom.build_text_select_runs();
         Painter::new(dom, &mut window.text_renderer, scale).paint(&mut scene);
         dom.refresh_hit_test();
 
