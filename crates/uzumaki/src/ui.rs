@@ -697,18 +697,18 @@ impl UIState {
         self.compute_styles_at(root, None);
     }
 
-    fn compute_styles_at(&mut self, node_id: UzNodeId, parent_style: Option<UzStyle>) {
+    fn compute_styles_at(&mut self, node_id: UzNodeId, parent_style: Option<&UzStyle>) {
         let hover = self.hit_state.is_hovered(node_id);
         let active = self.hit_state.is_active(node_id);
         let focus = self.focused_node == Some(node_id);
 
-        self.nodes[node_id].compute_styles(hover, active, focus, parent_style.as_ref());
+        self.nodes[node_id].compute_styles(hover, active, focus, parent_style);
 
         let computed = self.nodes[node_id].computed_style().clone();
         let children = self.nodes[node_id].children.clone();
         for child_id in children {
             if self.nodes.contains(child_id) {
-                self.compute_styles_at(child_id, Some(computed.clone()));
+                self.compute_styles_at(child_id, Some(&computed));
             }
         }
     }
