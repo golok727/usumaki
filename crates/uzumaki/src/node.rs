@@ -200,7 +200,7 @@ impl Node {
         active: bool,
         focus: bool,
         parent_style: Option<&UzStyle>,
-    ) {
+    ) -> bool {
         let mut style = self.default_style.clone();
 
         if let Some(parent_style) = parent_style {
@@ -222,8 +222,11 @@ impl Node {
             style.outline = Some(Outline::FOCUS_RING);
         }
 
-        self.taffy_style = style.to_taffy();
+        let new_taffy = style.to_taffy();
+        let changed = self.taffy_style != new_taffy;
+        self.taffy_style = new_taffy;
         self.computed_style = style;
+        changed
     }
 
     #[inline]

@@ -107,6 +107,12 @@ pub struct UIState {
     /// mutation) and a fresh hit-test is needed before input dispatch.
     /// `hit_tree::rebuild` clears it.
     pub hit_tree_dirty: bool,
+
+    /// Set by DOM/content mutations that can change geometry. Lets
+    /// `compute_layout` reuse the prior frame's layout when nothing changed.
+    pub layout_dirty: bool,
+
+    last_layout_size: Option<taffy::Size<f32>>,
 }
 
 impl Default for UIState {
@@ -134,11 +140,20 @@ impl UIState {
             text_selection: TextSelection::default(),
             hit_tree_dirty: true,
             selectable_text_runs: Vec::new(),
+            layout_dirty: true,
+            last_layout_size: None,
         }
     }
 
     pub fn has_focused_node(&self) -> bool {
         self.focused_node.is_some()
+    }
+
+    /// Flag that geometry may have changed, so the next `compute_layout` runs
+    /// a fresh Taffy pass and rebuilds the hit tree.
+    pub fn mark_layout_dirty(&mut self) {
+        self.layout_dirty = true;
+        self.hit_tree_dirty = true;
     }
 
     pub(crate) fn with_focused_node<R>(
@@ -270,6 +285,7 @@ impl UIState {
         // first layout pass runs.
         self.nodes[child_id].layout_parent = Some(parent_id);
         self.nodes[parent_id].children.push(child_id);
+        self.mark_layout_dirty();
     }
 
     pub fn insert_before(&mut self, parent_id: UzNodeId, child_id: UzNodeId, before_id: UzNodeId) {
@@ -292,6 +308,7 @@ impl UIState {
             return;
         };
         self.nodes[parent_id].children.insert(index, child_id);
+        self.mark_layout_dirty();
     }
 
     /// Walks the parent chain from `node_id` and returns true if it reaches
@@ -577,6 +594,7 @@ impl UIState {
         }
         self.nodes[child_id].parent = None;
         self.nodes[child_id].layout_parent = None;
+        self.mark_layout_dirty();
         // The node lives on in the slab until its JS wrapper is collected, but
         // every long-lived NodeId field (selection, focus, hit-state, scroll
         // locks…) refers to nodes by their place in the tree. Once detached
@@ -610,6 +628,7 @@ impl UIState {
 
         self.on_node_removed(node_id);
         self.nodes.remove(node_id);
+        self.mark_layout_dirty();
     }
 
     /// Update a text node's content.
@@ -617,6 +636,7 @@ impl UIState {
         let node = &mut self.nodes[node_id];
         if let Some(text_node) = node.text_content_mut() {
             text_node.content = text;
+            self.mark_layout_dirty();
         }
     }
 
@@ -628,6 +648,7 @@ impl UIState {
             return;
         };
         image_node.data = data;
+        self.mark_layout_dirty();
     }
 
     pub fn clear_image_data(&mut self, node_id: UzNodeId) {
@@ -638,6 +659,7 @@ impl UIState {
             return;
         };
         image_node.clear();
+        self.mark_layout_dirty();
     }
 
     /// Detach all children from `parent_id`. Nodes themselves stay alive in
@@ -648,6 +670,7 @@ impl UIState {
             self.nodes[child_id].parent = None;
             self.on_detached_subtree(child_id);
         }
+        self.mark_layout_dirty();
     }
 
     /// Walk the subtree rooted at `id` (still wired via `children` since we
@@ -674,19 +697,32 @@ impl UIState {
     ) {
         use std::time::Instant;
         let t0 = Instant::now();
-        self.compute_styles();
+        let style_changed = self.compute_styles();
         let t1 = Instant::now();
-        self.resolve_layout_children();
+
+        let size = taffy::Size { width, height };
+        let resized = self.last_layout_size != Some(size);
+        let run_layout = self.layout_dirty || style_changed || resized;
+
+        if run_layout {
+            self.resolve_layout_children();
+        }
         let t2 = Instant::now();
-        crate::layout::LayoutTree::run(self, text_renderer, width, height);
+        if run_layout {
+            crate::layout::LayoutTree::run(self, text_renderer, width, height);
+            self.layout_dirty = false;
+            self.last_layout_size = Some(size);
+            self.hit_tree_dirty = true;
+        }
         let t3 = Instant::now();
         if let Some((nid, opts)) = self.pending_scroll_node_into_view.take() {
             self.scroll_node_into_view(nid, opts);
         }
-        // Layout invalidates the hit tree — refresh it now so input
-        // dispatched between this frame and the next paint operates on
-        // current geometry.
-        crate::hit_tree::rebuild(self, text_renderer, scale);
+        // Refresh the hit tree whenever layout or scroll touched geometry so
+        // input dispatched before the next paint sees current positions.
+        if self.hit_tree_dirty {
+            crate::hit_tree::rebuild(self, text_renderer, scale);
+        }
         let t4 = Instant::now();
 
         if crate::perf::enabled() {
@@ -709,26 +745,29 @@ impl UIState {
         }
     }
 
-    fn compute_styles(&mut self) {
-        let Some(root) = self.root else { return };
-        self.compute_styles_at(root, None);
+    /// Run the style cascade over the tree. Returns `true` if any node's
+    /// `taffy_style` changed, signalling that a layout pass is needed.
+    fn compute_styles(&mut self) -> bool {
+        let Some(root) = self.root else { return false };
+        self.compute_styles_at(root, None)
     }
 
-    fn compute_styles_at(&mut self, node_id: UzNodeId, parent_style: Option<&UzStyle>) {
+    fn compute_styles_at(&mut self, node_id: UzNodeId, parent_style: Option<&UzStyle>) -> bool {
         let hover = self.hit_state.is_hovered(node_id);
         let active = self.hit_state.is_active(node_id);
         let focus = self.focused_node == Some(node_id);
 
-        self.nodes[node_id].compute_styles(hover, active, focus, parent_style);
+        let mut changed = self.nodes[node_id].compute_styles(hover, active, focus, parent_style);
 
         let computed = self.nodes[node_id].computed_style().clone();
         let child_count = self.nodes[node_id].children.len();
         for i in 0..child_count {
             let child_id = self.nodes[node_id].children[i];
             if self.nodes.contains(child_id) {
-                self.compute_styles_at(child_id, Some(&computed));
+                changed |= self.compute_styles_at(child_id, Some(&computed));
             }
         }
+        changed
     }
 
     /// Run hit test at the given mouse position and update hit_state.
