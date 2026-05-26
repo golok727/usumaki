@@ -15,6 +15,7 @@ pub(crate) mod layout;
 pub mod node;
 pub mod ops;
 pub mod paint;
+pub mod perf;
 pub mod selection;
 pub mod shared_string;
 pub mod style;

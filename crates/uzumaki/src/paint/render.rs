@@ -64,12 +64,13 @@ impl<'a> Painter<'a> {
         scene: &mut Scene,
         text_selections: &HashMap<UzNodeId, (usize, usize)>,
     ) {
-        let Some(node_ref) = self.dom.nodes.get(node_id) else {
+        let dom = self.dom;
+        let Some(node_ref) = dom.nodes.get(node_id) else {
             return;
         };
         let layout = node_ref.final_layout;
 
-        let computed_style = node_ref.computed_style().clone();
+        let computed_style = node_ref.computed_style();
 
         if computed_style.visibility == Visibility::Hidden
             || computed_style.display == crate::style::Display::None
@@ -92,7 +93,7 @@ impl<'a> Painter<'a> {
         self.paint_node(
             node_id,
             &layout,
-            &computed_style,
+            computed_style,
             border_box,
             Bounds::new(x, y, w, h),
             transform,
@@ -102,7 +103,7 @@ impl<'a> Painter<'a> {
 
         let view_scroll = self.prepare_view_scroll(
             node_id,
-            &computed_style,
+            computed_style,
             &layout,
             Bounds::new(x, y, w, h),
             transform,
@@ -135,8 +136,9 @@ impl<'a> Painter<'a> {
             scene.push_clip_layer(Fill::NonZero, transform, &content_box.to_rect());
         }
 
-        let children = self.dom.nodes[node_id].layout_children.borrow().clone();
-        for child_id in children {
+        let child_count = dom.nodes[node_id].layout_children.borrow().len();
+        for i in 0..child_count {
+            let child_id = dom.nodes[node_id].layout_children.borrow()[i];
             self.render_node(
                 child_id,
                 x - offset_x,

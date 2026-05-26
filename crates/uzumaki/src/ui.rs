@@ -672,9 +672,14 @@ impl UIState {
         text_renderer: &mut TextRenderer,
         scale: f64,
     ) {
+        use std::time::Instant;
+        let t0 = Instant::now();
         self.compute_styles();
+        let t1 = Instant::now();
         self.resolve_layout_children();
+        let t2 = Instant::now();
         crate::layout::LayoutTree::run(self, text_renderer, width, height);
+        let t3 = Instant::now();
         if let Some((nid, opts)) = self.pending_scroll_node_into_view.take() {
             self.scroll_node_into_view(nid, opts);
         }
@@ -682,6 +687,18 @@ impl UIState {
         // dispatched between this frame and the next paint operates on
         // current geometry.
         crate::hit_tree::rebuild(self, text_renderer, scale);
+        let t4 = Instant::now();
+
+        if crate::perf::enabled() {
+            crate::perf::record_layout_passes(crate::perf::FrameTimings {
+                styles: t1 - t0,
+                layout_children: t2 - t1,
+                layout: t3 - t2,
+                hit_tree: t4 - t3,
+                paint: std::time::Duration::ZERO,
+                node_count: self.nodes.len(),
+            });
+        }
     }
 
     /// Rebuild the hit tree if any state mutation has flagged it dirty
@@ -705,8 +722,9 @@ impl UIState {
         self.nodes[node_id].compute_styles(hover, active, focus, parent_style);
 
         let computed = self.nodes[node_id].computed_style().clone();
-        let children = self.nodes[node_id].children.clone();
-        for child_id in children {
+        let child_count = self.nodes[node_id].children.len();
+        for i in 0..child_count {
+            let child_id = self.nodes[node_id].children[i];
             if self.nodes.contains(child_id) {
                 self.compute_styles_at(child_id, Some(&computed));
             }
