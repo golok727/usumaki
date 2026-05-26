@@ -1503,7 +1503,7 @@ function ScrollDemo() {
                     p={10}
                     bg={(i + j) % 2 === 0 ? C.surface3 : C.surface4}
                     rounded={6}
-                    display="flex"
+                    flex="col"
                     items="center"
                     justify="between"
                   >
