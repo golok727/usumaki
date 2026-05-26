@@ -555,7 +555,12 @@ fn build_frame(state: &SharedJsState, id: WindowEntryId) {
 
         let mut scene = vello::Scene::new();
         dom.compute_layout(pw as f32, ph as f32, &mut window.text_renderer, scale);
+        dom.build_text_select_runs();
+        let paint_start = std::time::Instant::now();
         Painter::new(dom, &mut window.text_renderer, scale).paint(&mut scene);
+        if crate::perf::enabled() {
+            crate::perf::record_paint(paint_start.elapsed());
+        }
         dom.refresh_hit_test();
 
         *window.shared.pending_frame.lock().unwrap() = Some(scene);

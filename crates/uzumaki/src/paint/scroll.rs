@@ -56,24 +56,6 @@ impl ScrollAxisInfo {
     }
 }
 
-/// Vertical extent available for scrolling content when a horizontal scrollbar
-/// is shown along the bottom edge (matches thumb placement in `thumb_geometry`).
-#[inline]
-pub fn vertical_scroll_visible_height(
-    layout_height: f32,
-    layout_content_width: f32,
-    layout_size_width: f32,
-    overflow_x_scrollable: bool,
-    scrollbar_width: f32,
-) -> f32 {
-    let mut h = layout_height;
-    if overflow_x_scrollable && layout_content_width > layout_size_width + 0.5 {
-        let reserve = scrollbar_width.max(0.0) as f64;
-        h = ((h as f64) - reserve).max(1.0) as f32;
-    }
-    h
-}
-
 pub fn compute_scroll_offset(
     rel: f32,
     target_extent: f32,
