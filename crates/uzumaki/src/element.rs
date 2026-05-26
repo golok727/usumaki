@@ -280,6 +280,11 @@ pub struct TextLayout {
     pub text_len: usize,
     pub content_widths: Option<ContentWidths>,
     pub kind: InlineLayoutKind,
+    /// True once `layout` holds shaped glyphs for this frame. The construct
+    /// phase rebuilds `TextLayout` each frame (resetting this to false), so a
+    /// `true` value means a measure pass already shaped it and later probes
+    /// can re-break at a new width instead of reshaping.
+    pub shaped: bool,
 }
 
 impl TextLayout {

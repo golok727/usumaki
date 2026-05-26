@@ -241,10 +241,15 @@ impl<'a> LayoutTree<'a> {
             .unwrap_or_default();
         let style = self.nodes()[node_id].computed_style().clone();
         let taffy_style = self.nodes()[node_id].taffy_style.clone();
+        let align = style.text.text_align;
 
-        // We need the parley layout outside the leaf measure closure so we can
-        // stash it. Run the measure inline.
-        let mut stashed_layout: Option<parley::Layout<crate::text::TextBrush>> = None;
+        // Reuse a shaping built by an earlier probe this pass; later probes
+        // only differ by wrap width, so we re-break rather than reshape.
+        let mut stashed_layout = self.nodes_mut()[node_id]
+            .as_element_mut()
+            .and_then(|el| el.inline_layout.take())
+            .filter(|tl| tl.shaped && matches!(tl.kind, InlineLayoutKind::Leaf))
+            .map(|tl| tl.layout);
         let output = compute_leaf_layout(
             inputs,
             &taffy_style,
@@ -261,17 +266,24 @@ impl<'a> LayoutTree<'a> {
                     AvailableSpace::MinContent => Some(0.0),
                     AvailableSpace::MaxContent => None,
                 });
-                // Use the leaf-brush sentinel so per-span paint code can't
-                // mistake this leaf's own glyphs for an inline `<text>` chip
-                // span (which would double-paint the leaf's box).
-                let layout =
-                    self.text
-                        .build_inline_layout(&style.text, LEAF_BRUSH_ID, max_w, |builder| {
+                if let Some(layout) = stashed_layout.as_mut() {
+                    crate::text::TextRenderer::rebreak(layout, max_w, align);
+                } else {
+                    // Use the leaf-brush sentinel so per-span paint code can't
+                    // mistake this leaf's own glyphs for an inline `<text>` chip
+                    // span (which would double-paint the leaf's box).
+                    stashed_layout = Some(self.text.build_inline_layout(
+                        &style.text,
+                        LEAF_BRUSH_ID,
+                        max_w,
+                        |builder| {
                             builder.push_text(&text);
-                        });
+                        },
+                    ));
+                }
+                let layout = stashed_layout.as_ref().unwrap();
                 let w = known.width.unwrap_or_else(|| layout.full_width().ceil());
                 let h = known.height.unwrap_or_else(|| layout.height().ceil());
-                stashed_layout = Some(layout);
                 Size {
                     width: w,
                     height: h,
@@ -287,6 +299,7 @@ impl<'a> LayoutTree<'a> {
                 layout,
                 text_len,
                 kind: InlineLayoutKind::Leaf,
+                shaped: true,
                 ..TextLayout::default()
             }));
         }
@@ -361,106 +374,132 @@ impl<'a> LayoutTree<'a> {
             })
             .or_else(|| style_size.width.map(|w| (w - inset_w).max(0.0)));
 
-        // Resolve each entry's text slice and styled-span style up front so
-        // the build closure (which receives parley by &mut) doesn't need to
-        // borrow `self.nodes` while we hold a mut borrow of `self.text`.
-        struct InlineFragment {
-            node_id: UzNodeId,
-            text: String,
-            style: crate::style::TextStyle,
-            pad_left: f32,
-            pad_right: f32,
-            line_height: Option<f32>,
-        }
-        let mut fragments: Vec<InlineFragment> = Vec::with_capacity(entries.len());
-        for entry in &entries {
-            // Pull the text directly from the entry's source node — the
-            // concatenated string the construct phase used to build no
-            // longer exists.
-            let source_text = self
-                .nodes()
-                .get(entry.content_source)
-                .and_then(|n| n.get_text_content())
-                .map(|t| t.content.as_str())
-                .unwrap_or("");
-            let end = entry.byte_len.min(source_text.len());
-            let slice = &source_text[..end];
-            let entry_node = &self.nodes()[entry.node_id];
-            let entry_style = entry_node.computed_style();
-            let (pad_l, pad_r, line_height) = if entry_node.is_text_node() {
-                (0.0, 0.0, None)
+        let already_shaped = self.nodes()[node_id]
+            .as_element()
+            .and_then(|el| el.inline_layout.as_ref())
+            .is_some_and(|inline| inline.shaped);
+
+        let (measured_w, measured_h) = if already_shaped {
+            // Shaped by an earlier probe this pass — re-break at the new wrap
+            // width instead of rebuilding the spans.
+            let inline = self.nodes_mut()[node_id]
+                .as_element_mut()
+                .and_then(|el| el.inline_layout.as_mut())
+                .expect("already_shaped implies an inline layout");
+            crate::text::TextRenderer::rebreak(
+                &mut inline.layout,
+                available_width_f32,
+                computed_style.text.text_align,
+            );
+            (
+                inline.layout.full_width().ceil(),
+                inline.layout.height().ceil(),
+            )
+        } else {
+            // Resolve each entry's text slice and styled-span style up front so
+            // the build closure (which receives parley by &mut) doesn't need to
+            // borrow `self.nodes` while we hold a mut borrow of `self.text`.
+            struct InlineFragment {
+                node_id: UzNodeId,
+                text: String,
+                style: crate::style::TextStyle,
+                pad_left: f32,
+                pad_right: f32,
+                line_height: Option<f32>,
+            }
+            let mut fragments: Vec<InlineFragment> = Vec::with_capacity(entries.len());
+            for entry in &entries {
+                // Pull the text directly from the entry's source node — the
+                // concatenated string the construct phase used to build no
+                // longer exists.
+                let source_text = self
+                    .nodes()
+                    .get(entry.content_source)
+                    .and_then(|n| n.get_text_content())
+                    .map(|t| t.content.as_str())
+                    .unwrap_or("");
+                let end = entry.byte_len.min(source_text.len());
+                let slice = &source_text[..end];
+                let entry_node = &self.nodes()[entry.node_id];
+                let entry_style = entry_node.computed_style();
+                let (pad_l, pad_r, line_height) = if entry_node.is_text_node() {
+                    (0.0, 0.0, None)
+                } else {
+                    (
+                        entry_style.padding.left + entry_style.border_widths.left,
+                        entry_style.padding.right + entry_style.border_widths.right,
+                        Some(
+                            (entry_style.text.font_size * entry_style.text.line_height).ceil()
+                                + entry_style.padding.top
+                                + entry_style.padding.bottom
+                                + entry_style.border_widths.top
+                                + entry_style.border_widths.bottom,
+                        ),
+                    )
+                };
+                fragments.push(InlineFragment {
+                    node_id: entry.node_id,
+                    text: slice.to_owned(),
+                    style: entry_style.text.clone(),
+                    pad_left: pad_l,
+                    pad_right: pad_r,
+                    line_height,
+                });
+            }
+
+            let parley_layout = if fragments.is_empty() {
+                self.text
+                    .build_layout("", &computed_style.text, available_width_f32)
             } else {
-                (
-                    entry_style.padding.left + entry_style.border_widths.left,
-                    entry_style.padding.right + entry_style.border_widths.right,
-                    Some(
-                        (entry_style.text.font_size * entry_style.text.line_height).ceil()
-                            + entry_style.padding.top
-                            + entry_style.padding.bottom
-                            + entry_style.border_widths.top
-                            + entry_style.border_widths.bottom,
-                    ),
+                self.text.build_inline_layout(
+                    &computed_style.text,
+                    node_id,
+                    available_width_f32,
+                    |builder| {
+                        for frag in &fragments {
+                            if frag.pad_left > 0.0 {
+                                builder.push_inline_box(InlineBox {
+                                    id: 0,
+                                    index: 0,
+                                    width: frag.pad_left,
+                                    height: 0.0,
+                                });
+                            }
+                            let mut span_style = frag.style.to_parley_text_style(frag.node_id);
+                            if let Some(line_height) = frag.line_height {
+                                span_style.line_height = parley::LineHeight::Absolute(line_height);
+                            }
+                            builder.push_style_span(span_style);
+                            builder.push_text(&frag.text);
+                            builder.pop_style_span();
+                            if frag.pad_right > 0.0 {
+                                builder.push_inline_box(InlineBox {
+                                    id: 0,
+                                    index: 0,
+                                    width: frag.pad_right,
+                                    height: 0.0,
+                                });
+                            }
+                        }
+                    },
                 )
             };
-            fragments.push(InlineFragment {
-                node_id: entry.node_id,
-                text: slice.to_owned(),
-                style: entry_style.text.clone(),
-                pad_left: pad_l,
-                pad_right: pad_r,
-                line_height,
-            });
-        }
 
-        let parley_layout = if fragments.is_empty() {
-            self.text
-                .build_layout("", &computed_style.text, available_width_f32)
-        } else {
-            self.text.build_inline_layout(
-                &computed_style.text,
-                node_id,
-                available_width_f32,
-                |builder| {
-                    for frag in &fragments {
-                        if frag.pad_left > 0.0 {
-                            builder.push_inline_box(InlineBox {
-                                id: 0,
-                                index: 0,
-                                width: frag.pad_left,
-                                height: 0.0,
-                            });
-                        }
-                        let mut span_style = frag.style.to_parley_text_style(frag.node_id);
-                        if let Some(line_height) = frag.line_height {
-                            span_style.line_height = parley::LineHeight::Absolute(line_height);
-                        }
-                        builder.push_style_span(span_style);
-                        builder.push_text(&frag.text);
-                        builder.pop_style_span();
-                        if frag.pad_right > 0.0 {
-                            builder.push_inline_box(InlineBox {
-                                id: 0,
-                                index: 0,
-                                width: frag.pad_right,
-                                height: 0.0,
-                            });
-                        }
-                    }
-                },
-            )
+            let measured_w = parley_layout.full_width().ceil();
+            let measured_h = parley_layout.height().ceil();
+
+            // Stash the parent's parley layout for paint / hit-test / selection.
+            // Construct already populated `kind = InlineRoot { entries }` and
+            // `text_len`; we just slot in the freshly built parley layout.
+            if let Some(element) = self.nodes_mut()[node_id].as_element_mut()
+                && let Some(inline) = element.inline_layout.as_mut()
+            {
+                inline.layout = parley_layout;
+                inline.shaped = true;
+            }
+
+            (measured_w, measured_h)
         };
-
-        let measured_w = parley_layout.full_width().ceil();
-        let measured_h = parley_layout.height().ceil();
-
-        // Stash the parent's parley layout for paint / hit-test / selection.
-        // Construct already populated `kind = InlineRoot { entries }` and
-        // `text_len`; we just slot in the freshly built parley layout.
-        if let Some(element) = self.nodes_mut()[node_id].as_element_mut()
-            && let Some(inline) = element.inline_layout.as_mut()
-        {
-            inline.layout = parley_layout;
-        }
 
         // Final outer size: include padding/border. Honor known_dimensions /
         // style sizes when present.

@@ -85,14 +85,10 @@ impl TextRenderer {
             builder.push_default(prop);
         }
         let mut layout = builder.build(text);
-        layout.break_all_lines(max_width);
-        let alignment = style.text_align;
         // Only apply alignment when a frame is provided. Without one, callers
         // (cursor x-positions, hit testing, single-line input drawing) want
         // natural unaligned coordinates and apply alignment themselves.
-        if alignment != ParleyAlignment::Start && max_width.is_some() {
-            layout.align(max_width, alignment, AlignmentOptions::default());
-        }
+        break_layout_lines(&mut layout, max_width, style.text_align);
         layout
     }
 
@@ -115,12 +111,20 @@ impl TextRenderer {
             .tree_builder(&mut self.font_ctx, 1.0, true, &parley_root);
         build(&mut builder);
         let (mut layout, _) = builder.build();
-        layout.break_all_lines(max_width);
-        let alignment = root_style.text_align;
-        if alignment != ParleyAlignment::Start && max_width.is_some() {
-            layout.align(max_width, alignment, AlignmentOptions::default());
-        }
+        break_layout_lines(&mut layout, max_width, root_style.text_align);
         layout
+    }
+
+    /// Re-break (and align) an already-shaped layout to `max_width`. Cheap
+    /// next to building: it reuses the shaped glyph runs and only recomputes
+    /// line breaks, so the layout pass can re-measure the same text at a
+    /// different width without reshaping.
+    pub(crate) fn rebreak(
+        layout: &mut Layout<TextBrush>,
+        max_width: Option<f32>,
+        alignment: ParleyAlignment,
+    ) {
+        break_layout_lines(layout, max_width, alignment);
     }
 
     fn grapheme_to_byte(boundaries: &[usize], grapheme_index: usize) -> usize {
@@ -355,6 +359,20 @@ impl TextRenderer {
         };
 
         (w.ceil(), h.ceil())
+    }
+}
+
+/// Break a built layout into lines at `max_width`, then align if the style
+/// asks for it and a wrap width is known. Shared by the build paths and the
+/// re-break fast path so the wrap/align rules stay in one place.
+fn break_layout_lines(
+    layout: &mut Layout<TextBrush>,
+    max_width: Option<f32>,
+    alignment: ParleyAlignment,
+) {
+    layout.break_all_lines(max_width);
+    if alignment != ParleyAlignment::Start && max_width.is_some() {
+        layout.align(max_width, alignment, AlignmentOptions::default());
     }
 }
 
