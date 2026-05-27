@@ -173,6 +173,7 @@ impl UIState {
 
         let mut out = String::new();
         let mut in_range = false;
+        let mut prev_group: Option<UzNodeId> = None;
         for entry in &run.entries {
             if entry.node_id == start.node {
                 in_range = true;
@@ -181,11 +182,20 @@ impl UIState {
                 continue;
             }
 
+            let group = self.entry_line_group(entry.layout_node_id);
+            if prev_group.is_some_and(|prev| prev != group) {
+                out.push('\n');
+            }
+            prev_group = Some(group);
+
             let Some(text) = self
                 .nodes
                 .get(entry.node_id)
                 .and_then(|n| n.get_text_content())
             else {
+                if entry.node_id == end.node {
+                    break;
+                }
                 continue;
             };
             let local_start = if entry.node_id == start.node {
@@ -206,6 +216,26 @@ impl UIState {
             }
         }
         out
+    }
+
+    /// The inline-formatting-context root an entry belongs to, used as its
+    /// "line" identity when copying selected text. For text folded into a
+    /// parent layout this is that parent; for a standalone box (an empty-line
+    /// marker) with no inline-root ancestor it is the node itself.
+    fn entry_line_group(&self, layout_node_id: UzNodeId) -> UzNodeId {
+        let mut id = layout_node_id;
+        loop {
+            let Some(node) = self.nodes.get(id) else {
+                return layout_node_id;
+            };
+            if node.flags.is_inline_root() {
+                return id;
+            }
+            match node.layout_parent {
+                Some(parent) => id = parent,
+                None => return layout_node_id,
+            }
+        }
     }
 
     /// Get the current selection range as flat grapheme offsets.
@@ -623,7 +653,8 @@ fn locate_in_run(run: &TextSelectRun, flat_idx: usize) -> Option<(usize, usize)>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::style::{Display, TextSelectable, UzStyle};
+    use crate::style::{Display, Length, Size, TextSelectable, UzStyle};
+    use crate::text::TextRenderer;
 
     fn selectable_style() -> UzStyle {
         // Block display so the construct phase folds the inline children
@@ -690,6 +721,89 @@ mod tests {
         dom.remove_child(root, second);
 
         assert!(dom.get_text_selection().is_none());
+    }
+
+    #[test]
+    fn selected_text_separates_block_lines_with_newlines() {
+        // Each line is a block view with two tokens that fold into one inline
+        // root. Tokens within a line stay joined; the line break between the
+        // two inline roots becomes a newline.
+        let mut dom = UIState::new();
+        let mut renderer = TextRenderer::new();
+
+        let mut root_style = selectable_style();
+        root_style.size = Size {
+            width: Length::Px(200.0),
+            height: Length::Px(100.0),
+        };
+        let root = dom.create_view(root_style);
+        let line_a = dom.create_view(UzStyle {
+            display: Display::Block,
+            ..Default::default()
+        });
+        let line_b = dom.create_view(UzStyle {
+            display: Display::Block,
+            ..Default::default()
+        });
+        let a1 = dom.create_text_element("fo".into(), Default::default());
+        let a2 = dom.create_text_element("o".into(), Default::default());
+        let b1 = dom.create_text_element("ba".into(), Default::default());
+        let b2 = dom.create_text_element("r".into(), Default::default());
+        dom.set_root(root);
+        dom.append_child(root, line_a);
+        dom.append_child(root, line_b);
+        dom.append_child(line_a, a1);
+        dom.append_child(line_a, a2);
+        dom.append_child(line_b, b1);
+        dom.append_child(line_b, b2);
+
+        dom.compute_layout(200.0, 100.0, &mut renderer, 1.0);
+        dom.build_text_select_runs();
+
+        dom.set_selection(TextSelection::new(
+            SelectionEndpoint::new(a1, 0, Affinity::Downstream),
+            SelectionEndpoint::new(b2, 1, Affinity::Upstream),
+        ));
+
+        assert_eq!(dom.selected_text(), "foo\nbar");
+    }
+
+    #[test]
+    fn selected_text_separates_single_text_lines_via_full_layout() {
+        let mut dom = UIState::new();
+        let mut renderer = TextRenderer::new();
+
+        let mut root_style = selectable_style();
+        root_style.size = Size {
+            width: Length::Px(200.0),
+            height: Length::Px(100.0),
+        };
+        let root = dom.create_view(root_style);
+        let line_a = dom.create_view(UzStyle {
+            display: Display::Block,
+            ..Default::default()
+        });
+        let line_b = dom.create_view(UzStyle {
+            display: Display::Block,
+            ..Default::default()
+        });
+        let first = dom.create_text_element("foo".into(), Default::default());
+        let second = dom.create_text_element("bar".into(), Default::default());
+        dom.set_root(root);
+        dom.append_child(root, line_a);
+        dom.append_child(root, line_b);
+        dom.append_child(line_a, first);
+        dom.append_child(line_b, second);
+
+        dom.compute_layout(200.0, 100.0, &mut renderer, 1.0);
+        dom.build_text_select_runs();
+
+        dom.set_selection(TextSelection::new(
+            SelectionEndpoint::new(first, 0, Affinity::Downstream),
+            SelectionEndpoint::new(second, 3, Affinity::Upstream),
+        ));
+
+        assert_eq!(dom.selected_text(), "foo\nbar");
     }
 
     #[test]
