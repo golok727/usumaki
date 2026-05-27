@@ -349,6 +349,11 @@ impl UIState {
 
     pub fn flat_index_for_endpoint(&self, endpoint: SelectionEndpoint) -> Option<usize> {
         let (_run, entry) = self.find_run_entry_for_node(endpoint.node)?;
+        // Empty-line markers carry no glyphs; the endpoint is the marker's
+        // single position in the flat run.
+        if entry.grapheme_count == 0 {
+            return Some(entry.flat_start);
+        }
         let layout = &self
             .nodes
             .get(entry.layout_node_id)?

@@ -331,11 +331,14 @@ fn hit_text_in_run(
 
     let (layout_node_id, _, bounds) = best?;
     let node = dom.nodes.get(layout_node_id)?;
+    // No inline layout and no text content means an empty-line marker; treat it
+    // as a zero-length line so the click anchors there.
     let text_len = node
         .as_element()
         .and_then(|element| element.inline_layout.as_ref())
         .map(|inline| inline.text_len)
-        .or_else(|| node.get_text_content().map(|text| text.content.len()))?;
+        .or_else(|| node.get_text_content().map(|text| text.content.len()))
+        .unwrap_or(0);
 
     if text_len == 0 {
         let entry = run
