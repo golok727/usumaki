@@ -209,42 +209,30 @@ pub(crate) fn set_node_style(
                 node.style_slot(variant).visibility = Some(visibility);
             }
         }
-        StyleProp::Scroll => {
-            let parsed_bool = value.parse_bool();
-            let style = node.style_slot(variant);
-            let overflow = if parsed_bool {
-                Overflow::Auto
-            } else {
-                Overflow::Visible
-            };
-            style.overflow_x = Some(overflow);
-            style.overflow_y = Some(overflow);
-            if !parsed_bool {
-                node.scroll_state = Default::default();
+        StyleProp::Overflow => {
+            if let Some(overflow) = parse_overflow(value.as_str()) {
+                let style = node.style_slot(variant);
+                style.overflow_x = Some(overflow);
+                style.overflow_y = Some(overflow);
+                if !overflow.is_scrollable() {
+                    node.scroll_state = Default::default();
+                }
             }
         }
-        StyleProp::ScrollX => {
-            let parsed_bool = value.parse_bool();
-            let style = node.style_slot(variant);
-            style.overflow_x = Some(if parsed_bool {
-                Overflow::Auto
-            } else {
-                Overflow::Visible
-            });
-            if !parsed_bool {
-                node.scroll_state.scroll_offset_x = 0.0;
+        StyleProp::OverflowX => {
+            if let Some(overflow) = parse_overflow(value.as_str()) {
+                node.style_slot(variant).overflow_x = Some(overflow);
+                if !overflow.is_scrollable() {
+                    node.scroll_state.scroll_offset_x = 0.0;
+                }
             }
         }
-        StyleProp::ScrollY => {
-            let parsed_bool = value.parse_bool();
-            let style = node.style_slot(variant);
-            style.overflow_y = Some(if parsed_bool {
-                Overflow::Auto
-            } else {
-                Overflow::Visible
-            });
-            if !parsed_bool {
-                node.scroll_state.scroll_offset_y = 0.0;
+        StyleProp::OverflowY => {
+            if let Some(overflow) = parse_overflow(value.as_str()) {
+                node.style_slot(variant).overflow_y = Some(overflow);
+                if !overflow.is_scrollable() {
+                    node.scroll_state.scroll_offset_y = 0.0;
+                }
             }
         }
         StyleProp::ScrollbarWidth => {
@@ -304,13 +292,23 @@ pub(crate) fn clear_node_style(
     clear_style_prop(node, prop, variant);
 
     match prop {
-        StyleProp::Scroll => node.scroll_state = Default::default(),
-        StyleProp::ScrollX => node.scroll_state.scroll_offset_x = 0.0,
-        StyleProp::ScrollY => node.scroll_state.scroll_offset_y = 0.0,
+        StyleProp::Overflow => node.scroll_state = Default::default(),
+        StyleProp::OverflowX => node.scroll_state.scroll_offset_x = 0.0,
+        StyleProp::OverflowY => node.scroll_state.scroll_offset_y = 0.0,
         StyleProp::TextSelect if variant == StyleSlot::Base => {
             node.set_text_selectable(TextSelectable::Inherit);
         }
         _ => {}
+    }
+}
+
+fn parse_overflow(value: &str) -> Option<Overflow> {
+    match value.trim() {
+        "visible" => Some(Overflow::Visible),
+        "hidden" | "clip" => Some(Overflow::Hidden),
+        "scroll" => Some(Overflow::Scroll),
+        "auto" => Some(Overflow::Auto),
+        _ => None,
     }
 }
 
@@ -549,12 +547,12 @@ fn clear_style_prop(node: &mut Node, prop: StyleProp, variant: StyleSlot) {
         StyleProp::Display => style.display = None,
         StyleProp::Cursor => style.cursor = None,
         StyleProp::Visibility => style.visibility = None,
-        StyleProp::Scroll => {
+        StyleProp::Overflow => {
             style.overflow_x = None;
             style.overflow_y = None;
         }
-        StyleProp::ScrollX => style.overflow_x = None,
-        StyleProp::ScrollY => style.overflow_y = None,
+        StyleProp::OverflowX => style.overflow_x = None,
+        StyleProp::OverflowY => style.overflow_y = None,
         StyleProp::ScrollbarWidth => style.scrollbar.width = None,
         StyleProp::ScrollbarColor => style.scrollbar.color = None,
         StyleProp::ScrollbarHoverColor => style.scrollbar.hover_color = None,

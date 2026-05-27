@@ -17,6 +17,8 @@ pub struct Hitbox {
     pub local_bounds: Bounds,
     /// Logical-space transform from local node coordinates to window coordinates.
     pub transform: Affine,
+    /// Screen-space clip from ancestor
+    pub clip: Option<Bounds>,
 }
 
 impl Hitbox {
@@ -26,6 +28,11 @@ impl Hitbox {
     }
 
     pub fn contains(&self, x: f64, y: f64) -> bool {
+        if let Some(clip) = self.clip
+            && !clip.contains(x, y)
+        {
+            return false;
+        }
         let local = self.transform.inverse() * Point::new(x, y);
         self.local_bounds.contains(local.x, local.y)
     }
@@ -75,7 +82,7 @@ impl HitboxStore {
 
     /// Register a hitbox and return its ID.
     pub fn insert(&mut self, node_id: UzNodeId, bounds: Bounds) -> HitboxId {
-        self.insert_transformed(node_id, bounds, Affine::IDENTITY)
+        self.insert_transformed(node_id, bounds, Affine::IDENTITY, None)
     }
 
     pub fn insert_transformed(
@@ -83,6 +90,7 @@ impl HitboxStore {
         node_id: UzNodeId,
         local_bounds: Bounds,
         transform: Affine,
+        clip: Option<Bounds>,
     ) -> HitboxId {
         let id = HitboxId(self.next_id);
         self.next_id += 1;
@@ -93,6 +101,7 @@ impl HitboxStore {
             bounds,
             local_bounds,
             transform,
+            clip,
         });
         id
     }

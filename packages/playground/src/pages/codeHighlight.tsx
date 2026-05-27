@@ -76,7 +76,7 @@ export function ShikiPage() {
           p={16}
           flex={1}
           flexDir="col"
-          scroll
+          overflow="auto"
           fontFamily="Geist Mono, monospace"
         >
           {lineTokens.map((tokens, i) => (

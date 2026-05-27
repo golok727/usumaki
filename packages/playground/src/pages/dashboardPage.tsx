@@ -61,7 +61,7 @@ export function DashboardPage() {
       flexDir="col"
       gap={0}
       h="full"
-      scrollY
+      overflowY="auto"
       scrollbarWidth={8}
       scrollbarRadius={5}
     >
@@ -320,7 +320,7 @@ export function DashboardPage() {
             </text>
             <Badge label="STREAMING" color={C.successHi} bg={C.successDim} />
           </view>
-          <view scroll h={160} display="flex" flexDir="col">
+          <view overflow="auto" h={160} display="flex" flexDir="col">
             {log.map((ev, i) => (
               <view
                 key={i}

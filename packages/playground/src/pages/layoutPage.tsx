@@ -20,7 +20,7 @@ const SECTIONS: Section[] = [
   { id: 'visibility', label: 'visible prop' },
   { id: 'inline', label: 'Inline flow' },
   { id: 'textalign', label: 'textAlign' },
-  { id: 'scroll', label: 'Scroll props' },
+  { id: 'overflow', label: 'Overflow props' },
   { id: 'absolute', label: 'Absolute positioning' },
 ];
 
@@ -65,7 +65,7 @@ const SectionNav = memo(function SectionNav({
           <view
             w={240}
             h={360}
-            scrollY
+            overflowY="auto"
             bg={C.surface2}
             rounded={12}
             border={1}
@@ -536,7 +536,7 @@ export function LayoutPage() {
         flexDir="col"
         gap={0}
         h="full"
-        scrollY
+        overflowY="auto"
         scrollbarRadius={5}
       >
         <view
@@ -1371,7 +1371,7 @@ export function LayoutPage() {
 
           <Divider />
 
-          <view ref={setRef('scroll')}>
+          <view ref={setRef('overflow')}>
             <ScrollDemo />
           </view>
 
@@ -1471,19 +1471,19 @@ function ScrollDemo() {
           Scroll props
         </text>
         <text fontSize={12} color={C.textMuted}>
-          `scroll` enables auto overflow on both axes, while `scrollX` and
-          `scrollY` let you opt into each axis separately.
+          `overflow` sets both axes (`visible` / `hidden` / `scroll` / `auto`),
+          while `overflowX` and `overflowY` target each axis.
         </text>
       </view>
 
       <view display="flex" flexDir="col" gap={16}>
         <view display="flex" flexDir="col" gap={8}>
           <text fontSize={12} fontWeight={600} color={C.textMuted}>
-            scroll
+            overflow="auto"
           </text>
           <view
             h={200}
-            scroll
+            overflow="auto"
             bg={C.surface2}
             rounded={8}
             border={1}
@@ -1522,11 +1522,11 @@ function ScrollDemo() {
 
         <view display="flex" flexDir="col" gap={8}>
           <text fontSize={12} fontWeight={600} color={C.textMuted}>
-            scrollX
+            overflowX="auto"
           </text>
           <view
             h={108}
-            scrollX
+            overflowX="auto"
             bg={C.surface2}
             rounded={8}
             border={1}
@@ -1583,11 +1583,11 @@ function ScrollDemo() {
 
         <view display="flex" flexDir="col" gap={8}>
           <text fontSize={12} fontWeight={600} color={C.textMuted}>
-            scrollY
+            overflowY="auto"
           </text>
           <view
             h={220}
-            scrollY
+            overflowY="auto"
             bg={C.surface2}
             rounded={8}
             border={1}
@@ -1629,7 +1629,7 @@ function ScrollDemo() {
           </text>
           <view
             h={220}
-            scrollY
+            overflowY="auto"
             bg={C.surface2}
             rounded={8}
             border={1}
