@@ -1104,12 +1104,37 @@ mod tests {
             Affine::translate((50.0, 50.0))
                 * Affine::rotate(std::f64::consts::FRAC_PI_4)
                 * Affine::translate((-5.0, -5.0)),
+            None,
         );
 
         dom.update_hit_test(50.0, 50.0);
         assert_eq!(dom.hit_state.top_node, Some(node));
 
         dom.update_hit_test(50.0, 42.0);
+        assert_eq!(dom.hit_state.top_node, None);
+    }
+
+    #[test]
+    fn clipped_hitbox_misses_points_outside_ancestor_clip() {
+        use crate::style::Bounds;
+        use vello::kurbo::Affine;
+
+        let mut dom = UIState::new();
+        let node = dom.create_view(Default::default());
+        // A 100x100 box at x 50..150 — e.g. content scrolled half out ie whose
+        // ancestor only exposes the 0..100 column. Points in the visible half
+        // hit; points in the clipped half (inside local_bounds) must not.
+        dom.hitbox_store.insert_transformed(
+            node,
+            Bounds::new(0.0, 0.0, 100.0, 100.0),
+            Affine::translate((50.0, 0.0)),
+            Some(Bounds::new(0.0, 0.0, 100.0, 100.0)),
+        );
+
+        dom.update_hit_test(80.0, 50.0);
+        assert_eq!(dom.hit_state.top_node, Some(node));
+
+        dom.update_hit_test(130.0, 50.0);
         assert_eq!(dom.hit_state.top_node, None);
     }
 }

@@ -16,6 +16,8 @@ import {
   UzViewElement,
 } from 'uzumaki';
 
+type Overflow = 'visible' | 'hidden' | 'scroll' | 'auto';
+
 interface ElementStyles {
   h?: number | string;
   w?: number | string;
@@ -101,9 +103,9 @@ interface ElementStyles {
   scale?: number | [number, number] | { x?: number; y?: number };
   scaleX?: number | string;
   scaleY?: number | string;
-  scroll?: boolean;
-  scrollX?: boolean;
-  scrollY?: boolean;
+  overflow?: Overflow;
+  overflowX?: Overflow;
+  overflowY?: Overflow;
   scrollbarWidth?: number | string;
   scrollbarColor?: string;
   scrollbarHoverColor?: string;

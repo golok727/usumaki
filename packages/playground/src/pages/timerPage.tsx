@@ -29,7 +29,7 @@ export function TimerPage() {
       flexDir="col"
       gap={0}
       h="full"
-      scrollY
+      overflowY="auto"
       scrollbarRadius={5}
     >
       <view

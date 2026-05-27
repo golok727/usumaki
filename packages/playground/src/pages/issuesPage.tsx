@@ -81,7 +81,7 @@ export function IssuesPage() {
       flexDir="col"
       gap={0}
       h="full"
-      scrollY
+      overflowY="auto"
       scrollbarWidth={8}
       scrollbarRadius={5}
     >
@@ -155,7 +155,7 @@ export function IssuesPage() {
             </view>
             <view
               h={420}
-              scroll
+              overflow="auto"
               bg={C.surface}
               rounded={8}
               border={1}

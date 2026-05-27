@@ -69,6 +69,7 @@ export function DragPage() {
           position="relative"
           w="full"
           h="full"
+          overflow="hidden"
           bg={C.surface}
           rounded={12}
           border={1}

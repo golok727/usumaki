@@ -55,7 +55,7 @@ export function StressPage() {
       flexDir="col"
       gap={0}
       h="full"
-      scrollY
+      overflowY="auto"
       scrollbarRadius={5}
     >
       <view
@@ -197,7 +197,7 @@ export function StressPage() {
               </button>
             </view>
           </view>
-          <view display="flex" flexDir="col" gap={4} scroll h={300}>
+          <view display="flex" flexDir="col" gap={4} overflow="auto" h={300}>
             {Array.from(
               { length: Math.ceil(tileColors.length / 16) },
               (_, rowIdx) => (
@@ -241,7 +241,7 @@ export function StressPage() {
             rounded={8}
             border={1}
             borderColor={C.border}
-            scroll
+            overflow="auto"
             h={200}
           >
             {Array.from({ length: 40 }, (_, i) => (

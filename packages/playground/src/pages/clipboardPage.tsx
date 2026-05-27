@@ -21,7 +21,13 @@ export function ClipboardPage() {
   }
 
   return (
-    <view display="flex" flexDir="col" h="full" scrollY scrollbarRadius={5}>
+    <view
+      display="flex"
+      flexDir="col"
+      h="full"
+      overflowY="auto"
+      scrollbarRadius={5}
+    >
       <view
         display="flex"
         flexDir="col"

@@ -45,7 +45,7 @@ export function EventsPage() {
       flexDir="col"
       gap={0}
       h="full"
-      scrollY
+      overflowY="auto"
       scrollbarWidth={8}
       scrollbarRadius={5}
     >
@@ -408,7 +408,7 @@ export function EventsPage() {
               </text>
             </button>
           </view>
-          <view scroll h={220} display="flex" flexDir="col">
+          <view overflow="auto" h={220} display="flex" flexDir="col">
             {eventLog.length === 0 ? (
               <view p={20} display="flex" items="center" justify="center">
                 <text fontSize={13} color={C.textMuted}>

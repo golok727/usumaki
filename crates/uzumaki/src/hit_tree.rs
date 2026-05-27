@@ -80,7 +80,7 @@ fn walk(
 
     let hitbox_id = state
         .hitbox_store
-        .insert_transformed(node_id, border_box, hit_transform);
+        .insert_transformed(node_id, border_box, hit_transform, clip);
     state.nodes[node_id].hitbox_id = Some(hitbox_id);
 
     if state.nodes[node_id].is_text_input() {
