@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use vello::Scene;
 use vello::kurbo::{Affine, Rect};
@@ -15,6 +15,18 @@ use crate::paint::{
 use crate::style::{Bounds, Overflow, ScrollbarStyle, UzStyle, Visibility};
 use crate::text::{LEAF_BRUSH_ID, TextBrush, TextRenderer};
 use crate::ui::UIState;
+
+const SELECTION_COLOR: VelloColor = VelloColor::from_rgba8(56, 121, 185, 128);
+
+/// View-selection state resolved once per frame and threaded through paint.
+/// `ranges` maps a text node to its selected byte range; `empty` holds
+/// selectable boxes with no text (blank lines) that fall inside the selection
+/// and need a caret-height rect drawn over them.
+#[derive(Default)]
+struct SelectionPaint {
+    ranges: HashMap<UzNodeId, (usize, usize)>,
+    empty: HashSet<UzNodeId>,
+}
 
 pub struct Painter<'a> {
     dom: &'a UIState,
@@ -36,7 +48,7 @@ impl<'a> Painter<'a> {
         // hit rects via `crate::hit_tree::rebuild`), the per-input editor
         // layout, and the text-select runs are all refreshed before paint.
         // Here we only consume current state to draw.
-        let text_selections = self.compute_text_selections_map();
+        let selection = self.compute_selection_paint();
 
         let Some(root) = self.dom.root else {
             return;
@@ -49,7 +61,7 @@ impl<'a> Painter<'a> {
             Affine::scale(self.scale),
             Affine::IDENTITY,
             scene,
-            &text_selections,
+            &selection,
         );
     }
 
@@ -62,7 +74,7 @@ impl<'a> Painter<'a> {
         parent_paint_transform: Affine,
         parent_hit_transform: Affine,
         scene: &mut Scene,
-        text_selections: &HashMap<UzNodeId, (usize, usize)>,
+        selection: &SelectionPaint,
     ) {
         let dom = self.dom;
         let Some(node_ref) = dom.nodes.get(node_id) else {
@@ -98,7 +110,7 @@ impl<'a> Painter<'a> {
             Bounds::new(x, y, w, h),
             transform,
             scene,
-            text_selections,
+            selection,
         );
 
         let view_scroll = self.prepare_view_scroll(
@@ -146,7 +158,7 @@ impl<'a> Painter<'a> {
                 child_paint_transform,
                 child_hit_transform,
                 scene,
-                text_selections,
+                selection,
             );
         }
 
@@ -178,7 +190,7 @@ impl<'a> Painter<'a> {
         view_bounds: Bounds, // absolute (x,y,w,h) for scrollbar placement
         transform: Affine,
         scene: &mut Scene,
-        text_selections: &HashMap<UzNodeId, (usize, usize)>,
+        selection: &SelectionPaint,
     ) {
         let node = &self.dom.nodes[node_id];
         if let Some(state) = node.as_text_input() {
@@ -244,7 +256,7 @@ impl<'a> Painter<'a> {
             let sel = if is_inline_root {
                 self.compute_inline_selection(node_id)
             } else {
-                text_selections.get(&node_id).copied()
+                selection.ranges.get(&node_id).copied()
             };
             self.paint_text_node(
                 scene,
@@ -260,6 +272,38 @@ impl<'a> Painter<'a> {
         } else {
             crate::paint::view::paint_view(scene, bounds, style, transform, |_| {});
         }
+
+        // Blank selectable lines hold no glyphs, so their selection rect can't
+        // come from a parley layout. A marker may be an empty `<view>` or an
+        // empty `<text>` element, so draw it here regardless of node kind.
+        if selection.empty.contains(&node_id) {
+            self.paint_empty_selection(scene, layout, style, transform);
+        }
+    }
+
+    /// Draw the selection rect for a blank selectable line. Mirrors how an
+    /// input paints the trailing newline of an empty line: a caret-height rect
+    /// at the line's start, a fraction of the font size wide.
+    fn paint_empty_selection(
+        &self,
+        scene: &mut Scene,
+        layout: &taffy::Layout,
+        style: &UzStyle,
+        transform: Affine,
+    ) {
+        let content = layout.content_box_bounds();
+        let line_h = (style.text.font_size * style.text.line_height) as f64;
+        let height = if content.height > 0.0 {
+            content.height
+        } else {
+            line_h
+        };
+        if height <= 0.0 {
+            return;
+        }
+        let width = (style.text.font_size as f64 * 0.4).max(1.0);
+        let rect = Rect::new(content.x, content.y, content.x + width, content.y + height);
+        scene.fill(Fill::NonZero, transform, SELECTION_COLOR, None, &rect);
     }
 
     /// Draw an inline-formatting-context node from its cached parley layout.
@@ -297,12 +341,11 @@ impl<'a> Painter<'a> {
             if let Some((sel_start, sel_end)) = selection {
                 let rects =
                     crate::text::selection_rects_from_layout(layout, text_len, sel_start, sel_end);
-                let sel_color = VelloColor::from_rgba8(56, 121, 185, 128);
                 for rect in rects {
                     scene.fill(
                         Fill::NonZero,
                         transform,
-                        sel_color,
+                        SELECTION_COLOR,
                         None,
                         &Rect::new(
                             rect.x0 + text_x,
@@ -659,17 +702,17 @@ impl<'a> Painter<'a> {
         Some((range_start?, range_end?))
     }
 
-    fn compute_text_selections_map(&self) -> HashMap<UzNodeId, (usize, usize)> {
-        let mut map = HashMap::new();
+    fn compute_selection_paint(&self) -> SelectionPaint {
+        let mut paint = SelectionPaint::default();
         let sel = self.dom.text_selection;
         if sel.is_collapsed() {
-            return map;
+            return paint;
         }
         let Some((start, end)) = self.dom.ordered_text_selection() else {
-            return map;
+            return paint;
         };
         let Some(run) = self.dom.find_run_for_node(start.node) else {
-            return map;
+            return paint;
         };
         let mut in_range = false;
         for entry in &run.entries {
@@ -677,6 +720,13 @@ impl<'a> Painter<'a> {
                 in_range = true;
             }
             if !in_range {
+                continue;
+            }
+            // Zero-length marker for an empty line. It only paints when it sits
+            // strictly inside the selection, i.e. some earlier node started the
+            // range and a later node ends it.
+            if entry.grapheme_count == 0 && entry.node_id != end.node {
+                paint.empty.insert(entry.node_id);
                 continue;
             }
             let Some(text) = self
@@ -698,13 +748,13 @@ impl<'a> Painter<'a> {
                 text.content.len()
             };
             if local_start < local_end {
-                map.insert(entry.node_id, (local_start, local_end));
+                paint.ranges.insert(entry.node_id, (local_start, local_end));
             }
             if entry.node_id == end.node {
                 break;
             }
         }
-        map
+        paint
     }
 }
 

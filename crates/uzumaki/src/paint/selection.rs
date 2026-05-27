@@ -11,10 +11,13 @@ impl UIState {
     pub fn build_text_select_runs(&mut self) {
         self.selectable_text_runs.clear();
         let Some(root) = self.root else { return };
-        self.visit_text_select(root, None);
+        let _ = self.visit_text_select(root, None);
     }
 
-    fn visit_text_select(&mut self, node_id: UzNodeId, run_idx: Option<usize>) {
+    /// Returns `true` if this node or any descendant contributed an entry to
+    /// the run (real text or an empty marker). The parent uses this to decide
+    /// whether it is itself an empty selectable box that needs a marker.
+    fn visit_text_select(&mut self, node_id: UzNodeId, run_idx: Option<usize>) -> bool {
         let resolved_text_sel = self.nodes[node_id]
             .computed_style()
             .text_selectable
@@ -37,6 +40,8 @@ impl UIState {
         };
 
         let is_inline_root = self.nodes[node_id].flags.is_inline_root();
+
+        let mut pushed_own = false;
 
         if let Some(idx) = current_run
             && let Some(inline) = self.nodes[node_id]
@@ -69,6 +74,7 @@ impl UIState {
                     grapheme_count,
                 });
                 run.total_graphemes += grapheme_count;
+                pushed_own = true;
             }
         } else if let Some(idx) = current_run
             && self.nodes[node_id].get_text_content().is_some()
@@ -98,9 +104,11 @@ impl UIState {
                 grapheme_count: gc,
             });
             run.total_graphemes += gc;
+            pushed_own = true;
         }
 
         let layout_children = self.nodes[node_id].layout_children.borrow().clone();
+        let mut any_child = false;
         for cid in layout_children {
             // Bare text children of an inline-root parent are already
             // represented in the parent's entries; skip them so we don't
@@ -113,8 +121,34 @@ impl UIState {
             {
                 continue;
             }
-            self.visit_text_select(cid, current_run);
+            any_child |= self.visit_text_select(cid, current_run);
         }
+
+        let contributed = pushed_own || any_child;
+
+        // A selectable box that holds no text of its own and no selectable
+        // descendant (an empty line, an empty list row) still occupies a line
+        // box. Record a zero-length marker at its position so selection paint
+        // can draw a caret-height rect there, the way a blank line inside an
+        // input does. Markers also bridge the vertical gap between selected
+        // lines so a multi-line selection reads as one continuous block.
+        if let Some(idx) = current_run
+            && !contributed
+            && self.nodes[node_id].final_layout.size.height > 0.0
+        {
+            let run = &mut self.selectable_text_runs[idx];
+            run.entries.push(TextRunEntry {
+                node_id,
+                layout_node_id: node_id,
+                flat_start: run.total_graphemes,
+                flat_byte_start: 0,
+                byte_len: 0,
+                grapheme_count: 0,
+            });
+            return true;
+        }
+
+        contributed
     }
 
     /// Get the currently selected text content. Checks focused input first,
@@ -252,6 +286,11 @@ impl UIState {
             .iter()
             .find(|r| r.root_id == root_id)?;
         for entry in &run.entries {
+            // Empty-line markers carry no layout; never resolve an endpoint onto
+            // one or the byte mapping below would abort.
+            if entry.grapheme_count == 0 {
+                continue;
+            }
             let entry_end = entry.flat_start + entry.grapheme_count;
             if flat_index <= entry_end {
                 let local_grapheme = flat_index.saturating_sub(entry.flat_start);
@@ -269,7 +308,7 @@ impl UIState {
                 return Some(SelectionEndpoint::new(entry.node_id, offset, affinity));
             }
         }
-        let entry = run.entries.last()?;
+        let entry = run.entries.iter().rev().find(|e| e.grapheme_count > 0)?;
         let text = self.nodes.get(entry.node_id)?.get_text_content()?;
         Some(SelectionEndpoint::new(
             entry.node_id,
@@ -651,5 +690,39 @@ mod tests {
         dom.remove_child(root, second);
 
         assert!(dom.get_text_selection().is_none());
+    }
+
+    #[test]
+    fn empty_selectable_box_gets_zero_length_marker_in_document_order() {
+        let mut dom = UIState::new();
+        let root = dom.create_view(selectable_style());
+        let first = dom.create_text_element("hello".into(), Default::default());
+        let blank = dom.create_view(Default::default());
+        let second = dom.create_text_element("world".into(), Default::default());
+        dom.set_root(root);
+        dom.append_child(root, first);
+        dom.append_child(root, blank);
+        dom.append_child(root, second);
+        prepare_for_select_runs(&mut dom);
+        // The marker is only emitted for a box that occupies a line; the test
+        // harness skips the real layout pass, so seed a height.
+        dom.nodes[blank].final_layout.size.height = 10.0;
+        dom.build_text_select_runs();
+
+        let run = &dom.selectable_text_runs[0];
+        let marker_pos = run
+            .entries
+            .iter()
+            .position(|e| e.node_id == blank)
+            .expect("empty box should have a marker entry");
+        assert_eq!(run.entries[marker_pos].grapheme_count, 0);
+        // Marker sits between the two text entries in document order.
+        let first_pos = run.entries.iter().position(|e| e.node_id == first).unwrap();
+        let second_pos = run
+            .entries
+            .iter()
+            .position(|e| e.node_id == second)
+            .unwrap();
+        assert!(first_pos < marker_pos && marker_pos < second_pos);
     }
 }
