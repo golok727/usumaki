@@ -110,6 +110,26 @@ fn hover_transition_events(
     events
 }
 
+/// Cursor to display for the pointer at `(x, y)`. The scrollbar thumb paints
+/// over content but isn't a hit-tree node, so resolving from `top_node` alone
+/// would pick up whatever sits underneath (e.g. selectable text -> Text
+/// cursor). Force the default arrow while hovering or dragging a thumb so it
+/// behaves like a normal scrollbar.
+fn resolve_pointer_cursor(dom: &UIState, x: f64, y: f64) -> crate::cursor::UzCursorIcon {
+    let over_thumb = dom.drag_mode.as_scrollbar_thumb().is_some()
+        || dom
+            .scroll_thumbs
+            .iter()
+            .any(|t| t.thumb_bounds.contains(x, y));
+    if over_thumb {
+        return crate::cursor::UzCursorIcon::Default;
+    }
+    dom.hit_state
+        .top_node
+        .map(|id| dom.resolve_cursor(id))
+        .unwrap_or(crate::cursor::UzCursorIcon::Default)
+}
+
 pub fn handle_cursor_moved(
     dom: &mut UIState,
     handle: &mut Window,
@@ -236,12 +256,7 @@ pub fn handle_cursor_moved(
         }
     }
 
-    let cursor = dom
-        .hit_state
-        .top_node
-        .map(|id| dom.resolve_cursor(id))
-        .unwrap_or(crate::cursor::UzCursorIcon::Default);
-    handle.set_cursor(cursor);
+    handle.set_cursor(resolve_pointer_cursor(dom, logical_x, logical_y));
 
     // Synthesize the boundary-crossing events (out/over/leave/enter) before the
     // move, with per-target coordinates and relatedTarget resolved from the DOM.
@@ -299,9 +314,15 @@ fn hit_text_in_run(
 
     let mut best: Option<(UzNodeId, f64, Bounds)> = None;
     for entry in &run.entries {
-        let node = dom.nodes.get(entry.layout_node_id)?;
-        let hid = node.hitbox_id?;
-        let hb = dom.hitbox_store.get(hid)?;
+        // Entries whose layout node is scrolled outside the run's clip
+        // region have no hitbox. Skip them rather than aborting the hit so a
+        // drag keeps tracking the closest visible line.
+        let Some(node) = dom.nodes.get(entry.layout_node_id) else {
+            continue;
+        };
+        let Some(hb) = node.hitbox_id.and_then(|hid| dom.hitbox_store.get(hid)) else {
+            continue;
+        };
         let dist = point_to_rect_dist(mx, my, &hb.bounds);
         if best.is_none() || dist < best.unwrap().1 {
             best = Some((entry.layout_node_id, dist, hb.bounds));
@@ -868,4 +889,135 @@ pub fn handle_mouse_input(
     }
 
     (needs_redraw, events)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::style::{Bounds, Display, TextSelectable, UzStyle};
+    use crate::text::TextRenderer;
+
+    fn line_style() -> UzStyle {
+        UzStyle {
+            display: Display::Block,
+            text_selectable: TextSelectable::True,
+            ..Default::default()
+        }
+    }
+
+    // Overflowing content (e.g. a long code block) lays out more lines than the
+    // clip region shows. Lines scrolled outside that region have no hitbox. A
+    // drag-select that walks past them must skip the missing entries and keep
+    // tracking the closest visible line instead of aborting the hit.
+    #[test]
+    fn drag_hit_tracks_closest_visible_line_when_top_lines_clipped() {
+        let mut dom = UIState::new();
+        let mut renderer = TextRenderer::new();
+
+        let root = dom.create_view(line_style());
+        dom.set_root(root);
+
+        for text in ["first line", "second line", "third line"] {
+            let block = dom.create_view(line_style());
+            let txt = dom.create_text_element(text.into(), Default::default());
+            dom.append_child(block, txt);
+            dom.append_child(root, block);
+        }
+
+        dom.compute_layout(200.0, 200.0, &mut renderer, 1.0);
+        dom.build_text_select_runs();
+
+        let entries: Vec<(UzNodeId, UzNodeId)> = dom
+            .selectable_text_runs
+            .iter()
+            .find(|r| r.root_id == root)
+            .expect("selectable run exists")
+            .entries
+            .iter()
+            .map(|e| (e.layout_node_id, e.node_id))
+            .collect();
+        assert_eq!(entries.len(), 3);
+
+        // Simulate the first line scrolled out of the clip region: no hitbox.
+        // The remaining lines get stacked 20px-tall hitboxes.
+        for (i, &(layout_node, _)) in entries.iter().enumerate() {
+            if i == 0 {
+                continue;
+            }
+            let y = (i as f64) * 20.0;
+            let hid = dom
+                .hitbox_store
+                .insert(layout_node, Bounds::new(0.0, y, 200.0, 20.0));
+            dom.nodes[layout_node].hitbox_id = Some(hid);
+        }
+
+        let hit = hit_text_in_run(&dom, &mut renderer, root, 5.0, 25.0)
+            .expect("drag still hits a visible line despite the clipped first entry");
+        assert_eq!(hit.node_id, entries[1].1);
+    }
+
+    fn push_thumb(dom: &mut UIState, node_id: UzNodeId, thumb: Bounds) {
+        dom.scroll_thumbs
+            .push(crate::paint::scroll::ScrollThumbRect {
+                node_id,
+                axis: ScrollAxis::Y,
+                thumb_bounds: thumb,
+                view_bounds: Bounds::new(thumb.x, 0.0, thumb.width, 200.0),
+                content_size: 400.0,
+                visible_size: 200.0,
+            });
+    }
+
+    // The scrollbar thumb paints over content without being a hit-tree node, so
+    // the cursor must come from the thumb rather than the selectable text
+    // underneath it.
+    #[test]
+    fn pointer_cursor_is_default_over_scroll_thumb() {
+        use crate::cursor::UzCursorIcon;
+
+        let mut dom = UIState::new();
+        let mut style = UzStyle::default();
+        style.cursor = Some(UzCursorIcon::Text);
+        let node = dom.create_view(style);
+        dom.nodes[node].compute_styles(false, false, false, None);
+        dom.hit_state.top_node = Some(node);
+
+        push_thumb(&mut dom, node, Bounds::new(190.0, 50.0, 10.0, 60.0));
+
+        // Over the thumb: default arrow, ignoring the underlying text cursor.
+        assert_eq!(
+            resolve_pointer_cursor(&dom, 194.0, 80.0),
+            UzCursorIcon::Default
+        );
+        // Away from the thumb: the node's own cursor resolves normally.
+        assert_eq!(resolve_pointer_cursor(&dom, 20.0, 80.0), UzCursorIcon::Text);
+    }
+
+    // A thumb drag may move the pointer off the thumb rect, but the cursor must
+    // stay the default arrow for the whole drag.
+    #[test]
+    fn pointer_cursor_is_default_while_dragging_thumb() {
+        use crate::cursor::UzCursorIcon;
+
+        let mut dom = UIState::new();
+        let mut style = UzStyle::default();
+        style.cursor = Some(UzCursorIcon::Text);
+        let node = dom.create_view(style);
+        dom.nodes[node].compute_styles(false, false, false, None);
+        dom.hit_state.top_node = Some(node);
+
+        dom.drag_mode = DragMode::ScrollbarThumb(ScrollDragState {
+            node_id: node,
+            axis: ScrollAxis::Y,
+            start_mouse_pos: 80.0,
+            start_scroll_offset: 0.0,
+            track_range: 140.0,
+            max_scroll: 200.0,
+        });
+
+        assert_eq!(
+            resolve_pointer_cursor(&dom, 20.0, 80.0),
+            UzCursorIcon::Default
+        );
+    }
 }

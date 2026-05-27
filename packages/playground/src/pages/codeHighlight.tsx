@@ -1,4 +1,4 @@
-import { memo, useMemo, useState } from 'react';
+import { memo, useDeferredValue, useMemo, useState } from 'react';
 import { useWindow } from 'uzumaki-react';
 import { C } from '../theme';
 import { useTheme } from '../useTheme';
@@ -25,40 +25,58 @@ const TokenRenderer = memo(function TokenComponent({
   return <text color={token.color}>{token.content}</text>;
 });
 
-const LineRenderer = memo(function LineComponent({
-  tokens,
-  lineNumber,
-}: {
-  tokens: TokenRenderer[];
-  lineNumber: number;
-}) {
-  return (
-    <view display="flex" flexDir="row" w="full" gap={12}>
-      <text
-        selectable={false}
-        color={C.textMuted}
-        fontSize={14}
-        w={32}
-        flexShrink={0}
-        textAlign="right"
-      >
-        {String(lineNumber)}
-      </text>
-      <view w="full" minW={0} fontSize={16}>
-        {tokens.map((token, j) => (
-          <TokenRenderer key={j} token={token} />
-        ))}
+function tokensEqual(a: TokenRenderer[], b: TokenRenderer[]) {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i]!.content !== b[i]!.content || a[i]!.color !== b[i]!.color)
+      return false;
+  }
+  return true;
+}
+
+const LineRenderer = memo(
+  function LineComponent({
+    tokens,
+    lineNumber,
+  }: {
+    tokens: TokenRenderer[];
+    lineNumber: number;
+  }) {
+    return (
+      <view display="flex" flexDir="row" w="full" gap={12}>
+        <text
+          selectable={false}
+          color={C.textMuted}
+          fontSize={14}
+          w={32}
+          flexShrink={0}
+          textAlign="right"
+        >
+          {String(lineNumber)}
+        </text>
+        <view w="full" minW={0} fontSize={16}>
+          {tokens.map((token, j) => (
+            <TokenRenderer key={j} token={token} />
+          ))}
+        </view>
       </view>
-    </view>
-  );
-});
+    );
+  },
+  (prev, next) =>
+    prev.lineNumber === next.lineNumber &&
+    tokensEqual(prev.tokens, next.tokens),
+);
 
 export function ShikiPage() {
   const [code, setCode] = useState(INITIAL_CODE);
   const window = useWindow();
   const theme = useTheme(window);
 
-  const lineTokens = useMemo(() => highlightTsx(code, theme), [code, theme]);
+  const deferredCode = useDeferredValue(code);
+  const lineTokens = useMemo(
+    () => highlightTsx(deferredCode, theme),
+    [deferredCode, theme],
+  );
 
   return (
     <view
