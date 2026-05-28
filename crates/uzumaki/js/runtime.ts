@@ -65,6 +65,7 @@ export { UzCheckboxElement } from 'ext:uzumaki/elements/checkbox.ts';
 
 export { Clipboard } from 'ext:uzumaki/clipboard.ts';
 export { Selection } from 'ext:uzumaki/selection.ts';
+export { Range } from 'ext:uzumaki/range.ts';
 export { UzEventTarget as EventEmitter } from 'ext:uzumaki/event-target.ts';
 export { EventType, UzEvent, EventPhase } from 'ext:uzumaki/events.ts';
 export type {

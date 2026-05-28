@@ -164,58 +164,137 @@ impl UIState {
         if self.text_selection.is_collapsed() {
             return String::new();
         }
-        let Some((start, end)) = self.ordered_text_selection() else {
+        let (Some(a), Some(b)) = (self.text_selection.anchor, self.text_selection.focus) else {
             return String::new();
         };
-        let Some(run) = self.find_run_for_node(start.node) else {
-            return String::new();
+
+        let (start, end) = match self.compare_doc_order(a.node, b.node) {
+            Some(std::cmp::Ordering::Less) => (a, b),
+            Some(std::cmp::Ordering::Greater) => (b, a),
+            Some(std::cmp::Ordering::Equal) => {
+                if a.offset <= b.offset {
+                    (a, b)
+                } else {
+                    (b, a)
+                }
+            }
+            None => return String::new(),
         };
 
         let mut out = String::new();
-        let mut in_range = false;
         let mut prev_group: Option<UzNodeId> = None;
-        for entry in &run.entries {
-            if entry.node_id == start.node {
-                in_range = true;
-            }
-            if !in_range {
-                continue;
-            }
-
-            let group = self.entry_line_group(entry.layout_node_id);
-            if prev_group.is_some_and(|prev| prev != group) {
-                out.push('\n');
-            }
-            prev_group = Some(group);
-
-            let Some(text) = self
-                .nodes
-                .get(entry.node_id)
-                .and_then(|n| n.get_text_content())
-            else {
-                if entry.node_id == end.node {
-                    break;
+        let mut cur = Some(start.node);
+        while let Some(id) = cur {
+            if let Some(node) = self.nodes.get(id)
+                && let Some(text) = node.get_text_content()
+            {
+                let group = self.dom_block_ancestor(id);
+                if prev_group.is_some_and(|prev| prev != group) {
+                    out.push('\n');
                 }
-                continue;
-            };
-            let local_start = if entry.node_id == start.node {
-                start.offset.min(text.content.len())
-            } else {
-                0
-            };
-            let local_end = if entry.node_id == end.node {
-                end.offset.min(text.content.len())
-            } else {
-                text.content.len()
-            };
-            if local_start < local_end {
-                out.push_str(&text.content[local_start..local_end]);
+                prev_group = Some(group);
+
+                let local_start = if id == start.node {
+                    start.offset.min(text.content.len())
+                } else {
+                    0
+                };
+                let local_end = if id == end.node {
+                    end.offset.min(text.content.len())
+                } else {
+                    text.content.len()
+                };
+                if local_start < local_end {
+                    out.push_str(&text.content[local_start..local_end]);
+                }
             }
-            if entry.node_id == end.node {
+
+            if id == end.node {
                 break;
             }
+            cur = self.next_in_doc_order(id);
         }
         out
+    }
+
+    /// Compare two nodes by DOM document order. `Less` means `a` precedes `b`
+    /// in pre-order traversal; `Equal` is only returned when `a == b`. Returns
+    /// `None` if the two nodes don't share a common ancestor.
+    fn compare_doc_order(&self, a: UzNodeId, b: UzNodeId) -> Option<std::cmp::Ordering> {
+        use std::cmp::Ordering;
+        if a == b {
+            return Some(Ordering::Equal);
+        }
+        let path_a = self.ancestor_path(a);
+        let path_b = self.ancestor_path(b);
+        // Walk both paths from root downward until they diverge.
+        let mut i = 0;
+        while i < path_a.len() && i < path_b.len() && path_a[i] == path_b[i] {
+            i += 1;
+        }
+        if i == 0 {
+            // No shared root.
+            return None;
+        }
+        if i == path_a.len() {
+            // `a` is an ancestor of `b`.
+            return Some(Ordering::Less);
+        }
+        if i == path_b.len() {
+            return Some(Ordering::Greater);
+        }
+        // Both have a sibling under the common ancestor at path[i-1].
+        let parent = path_a[i - 1];
+        let siblings = &self.nodes.get(parent)?.children;
+        let ia = siblings.iter().position(|&c| c == path_a[i])?;
+        let ib = siblings.iter().position(|&c| c == path_b[i])?;
+        Some(ia.cmp(&ib))
+    }
+
+    /// Root-to-node ancestor chain via DOM parents, inclusive.
+    fn ancestor_path(&self, node_id: UzNodeId) -> Vec<UzNodeId> {
+        let mut path = Vec::new();
+        let mut cur = Some(node_id);
+        while let Some(id) = cur {
+            path.push(id);
+            cur = self.nodes.get(id).and_then(|n| n.parent);
+        }
+        path.reverse();
+        path
+    }
+
+    /// Nearest non-inline-level DOM ancestor. Used to group text leaves into
+    /// "lines" for selection-text newline insertion, independent of layout.
+    fn dom_block_ancestor(&self, node_id: UzNodeId) -> UzNodeId {
+        let mut id = node_id;
+        loop {
+            let Some(node) = self.nodes.get(id) else {
+                return node_id;
+            };
+            if !node.is_inline_level() {
+                return id;
+            }
+            match node.parent {
+                Some(parent) => id = parent,
+                None => return id,
+            }
+        }
+    }
+
+    /// Next node in DOM pre-order (document order). Descends into the first
+    /// child if present, otherwise walks to the next sibling, climbing
+    /// parents until one has a next sibling.
+    fn next_in_doc_order(&self, node_id: UzNodeId) -> Option<UzNodeId> {
+        if let Some(first) = self.first_child(node_id) {
+            return Some(first);
+        }
+        let mut cur = node_id;
+        loop {
+            if let Some(next) = self.next_sibling(cur) {
+                return Some(next);
+            }
+            cur = self.nodes.get(cur).and_then(|n| n.parent)?;
+        }
     }
 
     /// The inline-formatting-context root an entry belongs to, used as its

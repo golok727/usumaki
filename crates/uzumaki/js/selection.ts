@@ -2,8 +2,9 @@ import type { CoreSelection } from 'ext:uzumaki/core.ts';
 import { resolveNode, UzNode } from 'ext:uzumaki/node.ts';
 import type { Window } from 'ext:uzumaki/window.ts';
 import type { UzSelectionEndpoint } from 'ext:uzumaki/events.ts';
+import { Range } from 'ext:uzumaki/range.ts';
 
-/** Shape accepted by `Selection.set` — node plus grapheme offset. */
+/** Shape accepted by `Selection.set`: a node plus grapheme offset. */
 export interface UzSelectionEndpointInit {
   node: UzNode;
   offset: number;
@@ -64,6 +65,38 @@ export class Selection {
 
   empty(): void {
     this._core.empty();
+    this._emit();
+  }
+
+  /**
+   * Snapshot the current selection as a detached `Range`. Returns `null`
+   * when there is no active selection.
+   */
+  getRange(): Range | null {
+    const anchor = this.anchor;
+    const focus = this.focus;
+    if (anchor == null || focus == null) return null;
+    const range = new Range(this._window);
+    range.setStart(anchor.node, anchor.offset);
+    range.setEnd(focus.node, focus.offset);
+    return range;
+  }
+
+  /**
+   * Apply a `Range` as the active selection. The range's start becomes the
+   * anchor and the end becomes the focus.
+   */
+  setRange(range: Range): void {
+    if (!range.isValid) return;
+    if (range.window !== this._window) {
+      throw new Error('Cannot apply a Range from a different window');
+    }
+    this._core.set(
+      range.startContainer!.nodeId,
+      range.startOffset,
+      range.endContainer!.nodeId,
+      range.endOffset,
+    );
     this._emit();
   }
 

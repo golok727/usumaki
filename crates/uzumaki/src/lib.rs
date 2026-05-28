@@ -96,6 +96,7 @@ extension!(
     "ext:uzumaki/core.ts" = "core.ts",
     "ext:uzumaki/clipboard.ts" = "clipboard.ts",
     "ext:uzumaki/selection.ts" = "selection.ts",
+    "ext:uzumaki/range.ts" = "range.ts",
     "ext:uzumaki/elements/base.ts" = "elements/base.ts",
     "ext:uzumaki/elements/element.ts" = "elements/element.ts",
     "ext:uzumaki/elements/button.ts" = "elements/button.ts",

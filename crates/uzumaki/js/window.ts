@@ -28,6 +28,7 @@ import {
   type WindowEventHandler,
 } from 'ext:uzumaki/events.ts';
 import { Selection } from 'ext:uzumaki/selection.ts';
+import { Range } from 'ext:uzumaki/range.ts';
 import { clearWindowNodes, nodeCount } from 'ext:uzumaki/registry.ts';
 
 const windowsByLabel = new Map<string, Window>();
@@ -378,6 +379,11 @@ export class Window {
    */
   getSelection(): Selection {
     return new Selection(this, this._native.getSelection());
+  }
+
+  /** Construct an empty {@link Range} bound to this window. */
+  createRange(): Range {
+    return new Range(this);
   }
 
   get isDisposed(): boolean {
