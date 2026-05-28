@@ -297,26 +297,6 @@ impl UIState {
         }
     }
 
-    /// The inline-formatting-context root an entry belongs to, used as its
-    /// "line" identity when copying selected text. For text folded into a
-    /// parent layout this is that parent; for a standalone box (an empty-line
-    /// marker) with no inline-root ancestor it is the node itself.
-    fn entry_line_group(&self, layout_node_id: UzNodeId) -> UzNodeId {
-        let mut id = layout_node_id;
-        loop {
-            let Some(node) = self.nodes.get(id) else {
-                return layout_node_id;
-            };
-            if node.flags.is_inline_root() {
-                return id;
-            }
-            match node.layout_parent {
-                Some(parent) => id = parent,
-                None => return layout_node_id,
-            }
-        }
-    }
-
     /// Get the current selection range as flat grapheme offsets.
     /// Returns (start, end) where start <= end.
     pub fn selection_range(&self) -> Option<(usize, usize)> {

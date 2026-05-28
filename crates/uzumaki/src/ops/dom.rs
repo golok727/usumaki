@@ -879,6 +879,36 @@ impl CoreSelection {
     pub fn empty(&self, state: &mut OpState) -> Result<(), deno_error::JsErrorBox> {
         write_selection(state, self.window_id, None)
     }
+
+    /// Apply a [`CoreRange`] as the active selection. No-op when the range is
+    /// not fully populated or belongs to a different window.
+    #[fast]
+    pub fn setRange(
+        &self,
+        state: &mut OpState,
+        #[cppgc] range: &CoreRange,
+    ) -> Result<(), deno_error::JsErrorBox> {
+        if range.window_id != self.window_id {
+            return Err(deno_error::JsErrorBox::new(
+                "InvalidRange",
+                "range belongs to a different window",
+            ));
+        }
+        let (Some((sn, so)), Some((en, eo))) = (range.start(), range.end()) else {
+            return Ok(());
+        };
+        let anchor = crate::selection::SelectionEndpoint::new(
+            sn,
+            so,
+            crate::selection::Affinity::Downstream,
+        );
+        let focus = crate::selection::SelectionEndpoint::new(
+            en,
+            eo,
+            crate::selection::Affinity::Downstream,
+        );
+        write_selection(state, self.window_id, Some((anchor, focus)))
+    }
 }
 
 fn write_selection(
@@ -905,6 +935,139 @@ fn write_selection(
         }
         Ok(())
     })
+}
+
+// Range
+
+/// Detached span of text. Holds two endpoints independent of any active
+/// selection. Same lifetime model as [`CoreSelection`]: the cppgc handle
+/// owns no Rust-side state in the slab; mutators just update its inner
+/// fields and getters read them back.
+pub struct CoreRange {
+    window_id: u32,
+    inner: std::cell::RefCell<RangeInner>,
+}
+
+#[derive(Default, Clone, Copy)]
+struct RangeInner {
+    start: Option<(UzNodeId, usize)>,
+    end: Option<(UzNodeId, usize)>,
+}
+
+impl CoreRange {
+    pub fn new(window_id: u32) -> Self {
+        Self {
+            window_id,
+            inner: std::cell::RefCell::new(RangeInner::default()),
+        }
+    }
+
+    pub fn start(&self) -> Option<(UzNodeId, usize)> {
+        self.inner.borrow().start
+    }
+
+    pub fn end(&self) -> Option<(UzNodeId, usize)> {
+        self.inner.borrow().end
+    }
+}
+
+unsafe impl GarbageCollected for CoreRange {
+    fn trace(&self, _visitor: &mut deno_core::v8::cppgc::Visitor) {}
+    fn get_name(&self) -> &'static std::ffi::CStr {
+        c"CoreRange"
+    }
+}
+
+#[op2]
+#[allow(non_snake_case)]
+impl CoreRange {
+    #[getter]
+    #[smi]
+    pub fn windowId(&self) -> u32 {
+        self.window_id
+    }
+
+    #[getter]
+    pub fn isValid(&self) -> bool {
+        let inner = self.inner.borrow();
+        inner.start.is_some() && inner.end.is_some()
+    }
+
+    #[getter]
+    pub fn collapsed(&self) -> bool {
+        let inner = self.inner.borrow();
+        inner.start == inner.end && inner.start.is_some()
+    }
+
+    #[getter]
+    #[smi]
+    pub fn startContainerId(&self) -> Option<u32> {
+        self.inner.borrow().start.map(|(id, _)| id as u32)
+    }
+
+    #[getter]
+    #[smi]
+    pub fn startOffset(&self) -> u32 {
+        self.inner
+            .borrow()
+            .start
+            .map(|(_, o)| o as u32)
+            .unwrap_or(0)
+    }
+
+    #[getter]
+    #[smi]
+    pub fn endContainerId(&self) -> Option<u32> {
+        self.inner.borrow().end.map(|(id, _)| id as u32)
+    }
+
+    #[getter]
+    #[smi]
+    pub fn endOffset(&self) -> u32 {
+        self.inner.borrow().end.map(|(_, o)| o as u32).unwrap_or(0)
+    }
+
+    #[fast]
+    pub fn setStart(&self, #[smi] node_id: u32, #[smi] offset: u32) {
+        self.inner.borrow_mut().start = Some((node_id as UzNodeId, offset as usize));
+    }
+
+    #[fast]
+    pub fn setEnd(&self, #[smi] node_id: u32, #[smi] offset: u32) {
+        self.inner.borrow_mut().end = Some((node_id as UzNodeId, offset as usize));
+    }
+
+    /// Cover all text inside `container_id`, from the first text leaf
+    /// (offset 0) to the end of the last text leaf. No-op when the
+    /// container has no text descendants.
+    #[fast]
+    pub fn selectNodeContents(&self, state: &OpState, #[smi] container_id: u32) {
+        let js = state.borrow::<SharedJsState>().clone();
+        let bounds = with_state(&js, |s| {
+            let entry = s.windows.get(&self.window_id)?;
+            let nid = container_id as UzNodeId;
+            let start = entry.dom.first_text_leaf(nid)?;
+            let end = entry.dom.last_text_leaf(nid)?;
+            let end_offset = entry.dom.text_byte_length(end);
+            Some(((start, 0usize), (end, end_offset)))
+        });
+        if let Some((start, end)) = bounds {
+            let mut inner = self.inner.borrow_mut();
+            inner.start = Some(start);
+            inner.end = Some(end);
+        }
+    }
+
+    /// Collapse to start (`to_start = true`, default) or end (`false`).
+    #[fast]
+    pub fn collapse(&self, to_start: bool) {
+        let mut inner = self.inner.borrow_mut();
+        if to_start {
+            inner.end = inner.start;
+        } else {
+            inner.start = inner.end;
+        }
+    }
 }
 
 #[op2]

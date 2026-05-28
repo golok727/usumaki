@@ -69,6 +69,16 @@ export class Selection {
   }
 
   /**
+   * Replace the selection with all text inside `container`. Equivalent to
+   * `setRange(window.createRange().selectNodeContents(container))`.
+   */
+  selectAll(container: UzNode): void {
+    const range = this._window.createRange();
+    range.selectNodeContents(container);
+    if (range.isValid) this.setRange(range);
+  }
+
+  /**
    * Snapshot the current selection as a detached `Range`. Returns `null`
    * when there is no active selection.
    */
@@ -76,7 +86,7 @@ export class Selection {
     const anchor = this.anchor;
     const focus = this.focus;
     if (anchor == null || focus == null) return null;
-    const range = new Range(this._window);
+    const range = this._window.createRange();
     range.setStart(anchor.node, anchor.offset);
     range.setEnd(focus.node, focus.offset);
     return range;
@@ -88,15 +98,7 @@ export class Selection {
    */
   setRange(range: Range): void {
     if (!range.isValid) return;
-    if (range.window !== this._window) {
-      throw new Error('Cannot apply a Range from a different window');
-    }
-    this._core.set(
-      range.startContainer!.nodeId,
-      range.startOffset,
-      range.endContainer!.nodeId,
-      range.endOffset,
-    );
+    this._core.setRange(range._core);
     this._emit();
   }
 

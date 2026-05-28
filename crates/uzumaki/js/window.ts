@@ -383,7 +383,7 @@ export class Window {
 
   /** Construct an empty {@link Range} bound to this window. */
   createRange(): Range {
-    return new Range(this);
+    return new Range(this, this._native.createRange());
   }
 
   get isDisposed(): boolean {

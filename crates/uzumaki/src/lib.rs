@@ -81,7 +81,7 @@ extension!(
     op_read_clipboard_text,
     op_write_clipboard_text,
   ],
-  objects = [ops::window::CoreWindow, ops::dom::CoreNode, ops::dom::CoreSelection, ops::path::AppPath],
+  objects = [ops::window::CoreWindow, ops::dom::CoreNode, ops::dom::CoreSelection, ops::dom::CoreRange, ops::path::AppPath],
   esm_entry_point = "ext:uzumaki/runtime.ts",
   esm = [
     dir "js",

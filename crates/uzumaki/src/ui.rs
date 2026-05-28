@@ -841,6 +841,50 @@ impl UIState {
         None
     }
 
+    /// First descendant (including `root`) that carries its own text content,
+    /// in DOM document order. Returns `None` if the subtree has no text.
+    pub fn first_text_leaf(&self, root: UzNodeId) -> Option<UzNodeId> {
+        self.find_text_leaf(root, false)
+    }
+
+    /// Last descendant (including `root`) that carries its own text content,
+    /// in DOM document order. Returns `None` if the subtree has no text.
+    pub fn last_text_leaf(&self, root: UzNodeId) -> Option<UzNodeId> {
+        self.find_text_leaf(root, true)
+    }
+
+    fn find_text_leaf(&self, root: UzNodeId, reverse: bool) -> Option<UzNodeId> {
+        let node = self.nodes.get(root)?;
+        if node.get_text_content().is_some() {
+            return Some(root);
+        }
+        if reverse {
+            for &child in node.children.iter().rev() {
+                if let Some(found) = self.find_text_leaf(child, true) {
+                    return Some(found);
+                }
+            }
+        } else {
+            for &child in node.children.iter() {
+                if let Some(found) = self.find_text_leaf(child, false) {
+                    return Some(found);
+                }
+            }
+        }
+        None
+    }
+
+    /// Byte length of `node_id`'s own text content, matching the offset units
+    /// stored in [`SelectionEndpoint`]. Returns 0 when the node isn't
+    /// text-bearing.
+    pub fn text_byte_length(&self, node_id: UzNodeId) -> usize {
+        self.nodes
+            .get(node_id)
+            .and_then(|n| n.get_text_content())
+            .map(|t| t.content.len())
+            .unwrap_or(0)
+    }
+
     /// Find the text run that contains a given text node.
     pub fn find_run_for_node(&self, node_id: UzNodeId) -> Option<&TextSelectRun> {
         self.selectable_text_runs

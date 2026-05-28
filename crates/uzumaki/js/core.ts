@@ -38,6 +38,7 @@ export interface CoreWindow {
   readonly innerHeight: number | null;
 
   getSelection(): CoreSelection;
+  createRange(): CoreRange;
 
   title: string | null;
   visible: boolean | null;
@@ -98,6 +99,21 @@ export interface CoreSelection {
     focusOffset: number,
   ): void;
   empty(): void;
+  setRange(range: CoreRange): void;
+}
+
+export interface CoreRange {
+  readonly windowId: number;
+  readonly isValid: boolean;
+  readonly collapsed: boolean;
+  readonly startContainerId: NodeId | null;
+  readonly startOffset: number;
+  readonly endContainerId: NodeId | null;
+  readonly endOffset: number;
+  setStart(nodeId: NodeId, offset: number): void;
+  setEnd(nodeId: NodeId, offset: number): void;
+  selectNodeContents(containerId: NodeId): void;
+  collapse(toStart: boolean): void;
 }
 
 export interface CoreNode {
