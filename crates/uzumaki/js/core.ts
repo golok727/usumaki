@@ -93,7 +93,7 @@ export interface CoreNode {
   insertBefore(child: CoreNode, before: CoreNode | null): void;
   removeChild(child: CoreNode): void;
   remove(): void;
-  removeChildren(): void;
+  clearChildren(): void;
   setAttribute(name: string, value: string): void;
   removeAttribute(name: string): void;
   getAttribute(name: string): unknown;

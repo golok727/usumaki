@@ -112,6 +112,24 @@ export interface UzThemeChangeEvent<
   readonly preference: WindowTheme;
 }
 
+export interface UzSelectionEndpoint {
+  /** The text-bearing node the endpoint resolves to. */
+  readonly node: UzNode;
+  /** Grapheme offset within `node`. */
+  readonly offset: number;
+}
+
+export interface UzSelectionChangeEvent<
+  T extends UzNode = UzNode,
+> extends UzumakiEvent<T> {
+  /** Where the user started the selection. `null` when there is no selection. */
+  readonly anchor: UzSelectionEndpoint | null;
+  /** Where the selection currently ends (the moving end). `null` when empty. */
+  readonly focus: UzSelectionEndpoint | null;
+  /** True when anchor and focus resolve to the same point. */
+  readonly isCollapsed: boolean;
+}
+
 /** DOM-style events that can be attached to any element. */
 export interface UzEventMap {
   /** Pointer moved over the element. Bubbles. */
@@ -162,6 +180,11 @@ export interface WindowEventMap extends UzEventMap {
   close: UzumakiEvent;
   resize: UzumakiResizeEvent;
   themechange: UzThemeChangeEvent;
+  /**
+   * The active text selection inside this window changed. Fires for view-level
+   * selection on `selectable` containers. Does not bubble.
+   */
+  selectionchange: UzSelectionChangeEvent;
 }
 
 export type EventName = keyof UzEventMap;
@@ -402,7 +425,11 @@ export function buildDomEvent(
 export function buildLifecycleEvent(
   type: string,
   payload: any,
-): UzumakiEvent | UzumakiResizeEvent | UzThemeChangeEvent {
+):
+  | UzumakiEvent
+  | UzumakiResizeEvent
+  | UzThemeChangeEvent
+  | UzSelectionChangeEvent {
   const base = new UzEvent(type, null, {
     currentTarget: null,
     eventPhase: EventPhase.Target,
@@ -420,6 +447,14 @@ export function buildLifecycleEvent(
       theme: payload?.theme ?? 'light',
       preference: payload?.preference ?? 'system',
     }) as UzThemeChangeEvent;
+  }
+
+  if (type === 'selectionchange') {
+    return Object.assign(base, {
+      anchor: payload?.anchor ?? null,
+      focus: payload?.focus ?? null,
+      isCollapsed: payload?.isCollapsed ?? true,
+    }) as UzSelectionChangeEvent;
   }
 
   return base;

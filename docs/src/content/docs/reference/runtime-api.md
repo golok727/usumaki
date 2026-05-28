@@ -70,7 +70,7 @@ node.appendChild(child);
 node.insertBefore(child, beforeNode);
 node.removeChild(child);
 node.remove();
-node.removeChildren();
+node.clearChildren();
 
 window.createElement('button');
 window.createTextNode('Hello');

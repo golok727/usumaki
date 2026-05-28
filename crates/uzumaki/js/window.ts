@@ -399,9 +399,9 @@ export class Window {
     this._emitter.off(eventName, handler, options);
   }
 
-  /** @internal Fire a lifecycle event (load/close/resize). */
+  /** @internal Fire a lifecycle event (load/close/resize/selectionchange). */
   _dispatchLifecycle(
-    name: 'load' | 'close' | 'resize',
+    name: 'load' | 'close' | 'resize' | 'selectionchange',
     payload?: any,
   ): boolean {
     const event = buildLifecycleEvent(name, payload);

@@ -139,6 +139,7 @@ pub fn handle_cursor_moved(
 ) -> (bool, Vec<AppEvent>) {
     let mut needs_redraw = false;
     let mut events: Vec<AppEvent> = Vec::new();
+    let selection_before = dom.text_selection;
     let scale = handle.scale_factor();
     let logical_x = position.x / scale;
     let logical_y = position.y / scale;
@@ -286,6 +287,12 @@ pub fn handle_cursor_moved(
             buttons: mouse_buttons,
             related_node_id: None,
         }));
+    }
+
+    if let Some(event) =
+        crate::events::selection_change_event(wid, &selection_before, &dom.text_selection)
+    {
+        events.push(event);
     }
 
     (needs_redraw, events)
@@ -522,6 +529,7 @@ pub fn handle_mouse_input(
 
     let mut needs_redraw = false;
     let mut events: Vec<AppEvent> = Vec::new();
+    let selection_before = dom.text_selection;
 
     let button_num: u8 = match button {
         winit::event::MouseButton::Left => 0,
@@ -889,6 +897,12 @@ pub fn handle_mouse_input(
             }
             needs_redraw = true;
         }
+    }
+
+    if let Some(event) =
+        crate::events::selection_change_event(wid, &selection_before, &dom.text_selection)
+    {
+        events.push(event);
     }
 
     (needs_redraw, events)

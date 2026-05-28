@@ -18,7 +18,7 @@ import {
 } from 'ext:uzumaki/window.ts';
 import { EventType as UzEventType } from 'ext:uzumaki/events.ts';
 import { dispatchDomEvent } from 'ext:uzumaki/dispatcher.ts';
-import { getNode } from 'ext:uzumaki/registry.ts';
+import { resolveNode } from 'ext:uzumaki/node.ts';
 import { AppPath } from 'ext:uzumaki/types.ts';
 
 const { ObjectDefineProperty } = primordials;
@@ -125,8 +125,7 @@ defineDispatch(
   ) => {
     const w = Window._getById(windowId);
     if (!w) return false;
-    const relatedTarget =
-      relatedNodeId == null ? null : (getNode(w, relatedNodeId) ?? null);
+    const relatedTarget = resolveNode(w, relatedNodeId);
     return dispatchToNode(windowId, type, nodeId, {
       x,
       y,
@@ -196,6 +195,28 @@ defineDispatch(
       selectionText,
       clipboardText,
     }),
+);
+
+defineDispatch(
+  '__uzumaki_dispatch_selectionchange__',
+  (
+    windowId: number,
+    anchorNodeId: number | null,
+    anchorOffset: number,
+    focusNodeId: number | null,
+    focusOffset: number,
+    isCollapsed: boolean,
+  ) => {
+    const w = Window._getById(windowId);
+    if (!w) return;
+    const anchorNode = resolveNode(w, anchorNodeId);
+    const focusNode = resolveNode(w, focusNodeId);
+    const anchor =
+      anchorNode == null ? null : { node: anchorNode, offset: anchorOffset };
+    const focus =
+      focusNode == null ? null : { node: focusNode, offset: focusOffset };
+    w._dispatchLifecycle('selectionchange', { anchor, focus, isCollapsed });
+  },
 );
 
 defineDispatch(

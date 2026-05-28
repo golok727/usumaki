@@ -184,20 +184,21 @@ impl CoreNode {
         #[smi] node_id: u32,
     ) -> Result<CoreNode, deno_error::JsErrorBox> {
         let js_state = state.borrow::<SharedJsState>().clone();
-        with_state(&js_state, |s| {
-            let Some(entry) = s.windows.get(&window_id) else {
-                return Err(window_not_found());
-            };
-            if !entry.dom.nodes.contains(node_id as UzNodeId) {
-                return Err(node_not_found());
-            }
-            Ok(CoreNode::new(
+        let exists = with_state(&js_state, |s| {
+            s.windows
+                .get(&window_id)
+                .map(|entry| entry.dom.nodes.contains(node_id as UzNodeId))
+        });
+        match exists {
+            None => Err(window_not_found()),
+            Some(false) => Err(node_not_found()),
+            Some(true) => Ok(CoreNode::new(
                 &js_state,
                 window_id,
                 node_id as UzNodeId,
                 true,
-            ))
-        })
+            )),
+        }
     }
 
     #[getter]
@@ -370,7 +371,7 @@ impl CoreNode {
 
     #[fast]
     #[allow(non_snake_case)]
-    pub fn removeChildren(&self, state: &mut OpState) -> Result<(), deno_error::JsErrorBox> {
+    pub fn clearChildren(&self, state: &mut OpState) -> Result<(), deno_error::JsErrorBox> {
         let js_state = state.borrow::<SharedJsState>().clone();
         with_state(&js_state, |s| {
             let Some(entry) = s.windows.get_mut(&self.window_id) else {
