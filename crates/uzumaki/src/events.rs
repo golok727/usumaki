@@ -14,7 +14,7 @@ mod text_input;
 mod types;
 mod wheel;
 
-pub use app_event::AppEvent;
+pub use app_event::{AppEvent, selection_change_event};
 pub use clipboard::{
     ClipboardCommand, ClipboardTarget, apply_clipboard_command, build_clipboard_command,
     clipboard_command_to_event,
@@ -29,6 +29,6 @@ pub use text_input::{
 };
 pub use types::{
     KeyModifiers, MouseButtons, UzClipboardEvent, UzFocusEvent, UzInputEvent, UzKeyboardEvent,
-    UzMouseEvent, UzResizeEvent, UzThemeEvent, UzWindowEvent,
+    UzMouseEvent, UzResizeEvent, UzSelectionChangeEvent, UzThemeEvent, UzWindowEvent,
 };
 pub use wheel::handle_mouse_wheel;

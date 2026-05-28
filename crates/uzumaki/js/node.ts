@@ -98,9 +98,9 @@ export class UzNode {
     }
   }
 
-  removeChildren(): void {
+  clearChildren(): void {
     if (!this.window.isDisposed) {
-      this._native.removeChildren();
+      this._native.clearChildren();
     }
   }
 
@@ -127,11 +127,16 @@ export class UzTextNode extends UzNode {
 /**
  * Resolve a node id to its JS wrapper. If the wrapper was collected but
  * Rust still owns the slab entry (because the node is connected to the
- * tree), rebuild a fresh base `UzNode` around it. Module-private: callers
- * go through traversal getters like `parentNode` / `firstChild`. The
- * `CoreNode` constructor is an implementation detail, not user-facing.
+ * tree), rebuild a fresh base `UzNode` around it. Callers outside this
+ * module should be event-dispatch glue that already holds a native node
+ * id the `CoreNode` constructor stays an implementation detail.
+ *
+ * @internal
  */
-function resolveNode(window: Window, nodeId: NodeId | null): UzNode | null {
+export function resolveNode(
+  window: Window,
+  nodeId: NodeId | null,
+): UzNode | null {
   if (nodeId == null) return null;
   const existing = getNode(window, nodeId);
   if (existing) return existing;

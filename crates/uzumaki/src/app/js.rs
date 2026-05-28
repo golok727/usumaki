@@ -371,6 +371,11 @@ fn run_js_thread(
             input: get_global_fn(scope, global_obj, b"__uzumaki_dispatch_input__")?,
             focus: get_global_fn(scope, global_obj, b"__uzumaki_dispatch_focus__")?,
             clipboard: get_global_fn(scope, global_obj, b"__uzumaki_dispatch_clipboard__")?,
+            selectionchange: get_global_fn(
+                scope,
+                global_obj,
+                b"__uzumaki_dispatch_selectionchange__",
+            )?,
             resize: get_global_fn(scope, global_obj, b"__uzumaki_dispatch_resize__")?,
             window_load: get_global_fn(scope, global_obj, b"__uzumaki_window_load__")?,
             window_close: get_global_fn(scope, global_obj, b"__uzumaki_window_close__")?,
@@ -606,6 +611,7 @@ pub struct JSGlobalEventDispatch {
     input: v8::Global<v8::Function>,
     focus: v8::Global<v8::Function>,
     clipboard: v8::Global<v8::Function>,
+    selectionchange: v8::Global<v8::Function>,
     resize: v8::Global<v8::Function>,
     window_load: v8::Global<v8::Function>,
     window_close: v8::Global<v8::Function>,
@@ -646,6 +652,17 @@ impl JSGlobalEventDispatch {
             AppEvent::Copy(e) => (&self.clipboard, clipboard_args(scope, ET_COPY, e)),
             AppEvent::Cut(e) => (&self.clipboard, clipboard_args(scope, ET_CUT, e)),
             AppEvent::Paste(e) => (&self.clipboard, clipboard_args(scope, ET_PASTE, e)),
+            AppEvent::SelectionChange(e) => (
+                &self.selectionchange,
+                vec![
+                    v_num(scope, e.window_id as f64),
+                    v_opt_node(scope, e.anchor_node_id),
+                    v_num(scope, e.anchor_offset as f64),
+                    v_opt_node(scope, e.focus_node_id),
+                    v_num(scope, e.focus_offset as f64),
+                    v_bool(scope, e.is_collapsed),
+                ],
+            ),
             AppEvent::WindowLoad(e) => (&self.window_load, vec![v_num(scope, e.window_id as f64)]),
             AppEvent::WindowClose(e) => {
                 (&self.window_close, vec![v_num(scope, e.window_id as f64)])
@@ -1047,18 +1064,27 @@ fn handle_window_event(
                             }
                         }
 
-                        with_state(state, |s| {
-                            if let Some(entry) = s.windows.get_mut(&wid)
-                                && entry.dom.focused_node.is_none()
-                                && events::handle_key_for_view_selection(
-                                    &mut entry.dom,
-                                    &key_event,
-                                    modifiers,
-                                )
-                            {
+                        let view_sel_events = with_state(state, |s| {
+                            let entry = s.windows.get_mut(&wid)?;
+                            if entry.dom.focused_node.is_some() {
+                                return None;
+                            }
+                            let (redraw, events) = events::handle_key_for_view_selection(
+                                &mut entry.dom,
+                                wid,
+                                &key_event,
+                                modifiers,
+                            );
+                            if redraw {
                                 needs_redraw = true;
                             }
+                            Some(events)
                         });
+                        if let Some(events) = view_sel_events {
+                            for event in events {
+                                dispatch.dispatch(worker, &event);
+                            }
+                        }
                     }
                 }
             }

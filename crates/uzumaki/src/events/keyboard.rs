@@ -327,15 +327,31 @@ pub fn handle_tab_focus(
 /// Returns true if a redraw is needed.
 pub fn handle_key_for_view_selection(
     dom: &mut UIState,
+    wid: u32,
     key_event: &winit::event::KeyEvent,
     modifiers: KeyModifiers,
-) -> bool {
+) -> (bool, Vec<super::AppEvent>) {
     use winit::event::ElementState;
 
     if key_event.state != ElementState::Pressed {
-        return false;
+        return (false, Vec::new());
     }
 
+    let selection_before = dom.text_selection;
+    let redraw = handle_key_for_view_selection_inner(dom, key_event, modifiers);
+    let mut events = Vec::new();
+    if let Some(event) = super::selection_change_event(wid, &selection_before, &dom.text_selection)
+    {
+        events.push(event);
+    }
+    (redraw, events)
+}
+
+fn handle_key_for_view_selection_inner(
+    dom: &mut UIState,
+    key_event: &winit::event::KeyEvent,
+    modifiers: KeyModifiers,
+) -> bool {
     let Some(sel) = dom.get_text_selection() else {
         return false;
     };

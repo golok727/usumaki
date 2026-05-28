@@ -10,13 +10,12 @@ import {
   type EventName,
   type UzumakiEvent,
 } from 'ext:uzumaki/events.ts';
-import { getNode } from 'ext:uzumaki/registry.ts';
+import { resolveNode } from 'ext:uzumaki/node.ts';
 import type { NodeId } from 'ext:uzumaki/types.ts';
 import type { Window } from 'ext:uzumaki/window.ts';
 
 function nodeAt(window: Window, id: NodeId | null) {
-  if (id == null) return null;
-  return getNode(window, id) ?? null;
+  return resolveNode(window, id);
 }
 
 function eventNodeEmitter(

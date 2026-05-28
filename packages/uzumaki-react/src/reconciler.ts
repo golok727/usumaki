@@ -188,7 +188,7 @@ function createReconciler() {
     },
 
     clearContainer(window) {
-      window.root.removeChildren();
+      window.root.clearChildren();
     },
 
     getRootHostContext: () => ({}),

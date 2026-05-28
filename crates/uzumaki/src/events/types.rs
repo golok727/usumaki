@@ -108,3 +108,14 @@ pub struct UzClipboardEvent {
     pub selection_text: Option<String>,
     pub clipboard_text: Option<String>,
 }
+
+#[derive(Serialize, Clone, Copy)]
+#[serde(rename_all = "camelCase")]
+pub struct UzSelectionChangeEvent {
+    pub window_id: u32,
+    pub anchor_node_id: Option<UzNodeId>,
+    pub anchor_offset: u32,
+    pub focus_node_id: Option<UzNodeId>,
+    pub focus_offset: u32,
+    pub is_collapsed: bool,
+}
