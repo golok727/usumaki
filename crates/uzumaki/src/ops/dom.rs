@@ -687,57 +687,223 @@ pub fn op_get_ancestor_path(
 }
 
 // Selection
+
+/// Live handle to the active text selection inside a window. Stays valid for
+/// the lifetime of the window. Getters read the latest `dom.text_selection`
+/// on each access; mutators commit straight into it.
+pub struct CoreSelection {
+    window_id: u32,
+}
+
+impl CoreSelection {
+    pub fn new(window_id: u32) -> Self {
+        Self { window_id }
+    }
+}
+
+unsafe impl GarbageCollected for CoreSelection {
+    fn trace(&self, _visitor: &mut deno_core::v8::cppgc::Visitor) {}
+    fn get_name(&self) -> &'static std::ffi::CStr {
+        c"CoreSelection"
+    }
+}
+
 #[op2]
-#[serde]
-pub fn op_get_selection(
-    state: &mut OpState,
-    #[smi] window_id: u32,
-) -> Result<serde_json::Value, deno_error::JsErrorBox> {
-    #[derive(serde::Serialize)]
-    #[serde(rename_all = "camelCase")]
-    struct SelectionEndpointState {
-        node_id: u32,
-        offset: usize,
-        affinity: crate::selection::Affinity,
+#[allow(non_snake_case)]
+impl CoreSelection {
+    #[getter]
+    #[smi]
+    pub fn windowId(&self) -> u32 {
+        self.window_id
     }
 
-    #[derive(serde::Serialize)]
-    #[serde(rename_all = "camelCase")]
-    struct SelectionState {
-        anchor: SelectionEndpointState,
-        focus: SelectionEndpointState,
-        is_collapsed: bool,
-        text: String,
-    }
-
-    let js_state = state.borrow::<SharedJsState>().clone();
-    with_state(&js_state, |s| {
-        let Some(entry) = s.windows.get(&window_id) else {
-            return Ok(serde_json::Value::Null);
-        };
-        let dom = &entry.dom;
-        let Some(sel) = dom.get_selection() else {
-            return Ok(serde_json::Value::Null);
-        };
-        let (Some(anchor), Some(focus)) = (sel.anchor, sel.focus) else {
-            return Ok(serde_json::Value::Null);
-        };
-        let text = dom.selected_text();
-        Ok(serde_json::to_value(SelectionState {
-            anchor: SelectionEndpointState {
-                node_id: anchor.node as u32,
-                offset: anchor.offset,
-                affinity: anchor.affinity,
-            },
-            focus: SelectionEndpointState {
-                node_id: focus.node as u32,
-                offset: focus.offset,
-                affinity: focus.affinity,
-            },
-            is_collapsed: sel.is_collapsed(),
-            text,
+    #[getter]
+    pub fn isActive(&self, state: &OpState) -> bool {
+        let js = state.borrow::<SharedJsState>().clone();
+        with_state(&js, |s| {
+            s.windows
+                .get(&self.window_id)
+                .is_some_and(|e| e.dom.text_selection.is_set())
         })
-        .unwrap())
+    }
+
+    #[getter]
+    pub fn isCollapsed(&self, state: &OpState) -> bool {
+        let js = state.borrow::<SharedJsState>().clone();
+        with_state(&js, |s| {
+            s.windows
+                .get(&self.window_id)
+                .is_some_and(|e| e.dom.text_selection.is_collapsed())
+        })
+    }
+
+    #[getter]
+    #[smi]
+    pub fn anchorNodeId(&self, state: &OpState) -> Option<u32> {
+        let js = state.borrow::<SharedJsState>().clone();
+        with_state(&js, |s| {
+            s.windows
+                .get(&self.window_id)?
+                .dom
+                .text_selection
+                .anchor
+                .map(|e| e.node as u32)
+        })
+    }
+
+    #[getter]
+    pub fn anchorOffset(&self, state: &OpState) -> u32 {
+        let js = state.borrow::<SharedJsState>().clone();
+        with_state(&js, |s| {
+            s.windows
+                .get(&self.window_id)
+                .and_then(|e| e.dom.text_selection.anchor.map(|p| p.offset as u32))
+                .unwrap_or(0)
+        })
+    }
+
+    #[getter]
+    #[smi]
+    pub fn focusNodeId(&self, state: &OpState) -> Option<u32> {
+        let js = state.borrow::<SharedJsState>().clone();
+        with_state(&js, |s| {
+            s.windows
+                .get(&self.window_id)?
+                .dom
+                .text_selection
+                .focus
+                .map(|e| e.node as u32)
+        })
+    }
+
+    #[getter]
+    pub fn focusOffset(&self, state: &OpState) -> u32 {
+        let js = state.borrow::<SharedJsState>().clone();
+        with_state(&js, |s| {
+            s.windows
+                .get(&self.window_id)
+                .and_then(|e| e.dom.text_selection.focus.map(|p| p.offset as u32))
+                .unwrap_or(0)
+        })
+    }
+
+    #[getter]
+    #[string]
+    pub fn text(&self, state: &OpState) -> String {
+        let js = state.borrow::<SharedJsState>().clone();
+        with_state(&js, |s| {
+            s.windows
+                .get(&self.window_id)
+                .map(|e| e.dom.selected_text())
+                .unwrap_or_default()
+        })
+    }
+
+    /// Collapse the selection to a single point at `(node, offset)`.
+    #[fast]
+    pub fn collapse(
+        &self,
+        state: &mut OpState,
+        #[smi] node_id: u32,
+        #[smi] offset: u32,
+    ) -> Result<(), deno_error::JsErrorBox> {
+        let endpoint = crate::selection::SelectionEndpoint::new(
+            node_id as UzNodeId,
+            offset as usize,
+            crate::selection::Affinity::Downstream,
+        );
+        write_selection(state, self.window_id, Some((endpoint, endpoint)))
+    }
+
+    /// Move the focus endpoint to `(node, offset)`. Keeps the anchor where it
+    /// is, so the selection extends to the new focus.
+    #[fast]
+    pub fn extend(
+        &self,
+        state: &mut OpState,
+        #[smi] node_id: u32,
+        #[smi] offset: u32,
+    ) -> Result<(), deno_error::JsErrorBox> {
+        let js = state.borrow::<SharedJsState>().clone();
+        with_state(&js, |s| {
+            let Some(entry) = s.windows.get_mut(&self.window_id) else {
+                return Err(window_not_found());
+            };
+            let anchor = entry.dom.text_selection.anchor.unwrap_or(
+                crate::selection::SelectionEndpoint::new(
+                    node_id as UzNodeId,
+                    offset as usize,
+                    crate::selection::Affinity::Downstream,
+                ),
+            );
+            let focus = crate::selection::SelectionEndpoint::new(
+                node_id as UzNodeId,
+                offset as usize,
+                crate::selection::Affinity::Downstream,
+            );
+            entry
+                .dom
+                .set_selection(crate::selection::TextSelection::new(anchor, focus));
+            if let Some(window) = entry.window.as_ref() {
+                window.request_redraw();
+            }
+            Ok(())
+        })
+    }
+
+    /// Replace both endpoints in a single call.
+    #[fast]
+    pub fn set(
+        &self,
+        state: &mut OpState,
+        #[smi] anchor_node: u32,
+        #[smi] anchor_offset: u32,
+        #[smi] focus_node: u32,
+        #[smi] focus_offset: u32,
+    ) -> Result<(), deno_error::JsErrorBox> {
+        let anchor = crate::selection::SelectionEndpoint::new(
+            anchor_node as UzNodeId,
+            anchor_offset as usize,
+            crate::selection::Affinity::Downstream,
+        );
+        let focus = crate::selection::SelectionEndpoint::new(
+            focus_node as UzNodeId,
+            focus_offset as usize,
+            crate::selection::Affinity::Downstream,
+        );
+        write_selection(state, self.window_id, Some((anchor, focus)))
+    }
+
+    /// Drop the selection. Mirrors `Selection.empty()` in the DOM.
+    #[fast]
+    pub fn empty(&self, state: &mut OpState) -> Result<(), deno_error::JsErrorBox> {
+        write_selection(state, self.window_id, None)
+    }
+}
+
+fn write_selection(
+    state: &mut OpState,
+    window_id: u32,
+    endpoints: Option<(
+        crate::selection::SelectionEndpoint,
+        crate::selection::SelectionEndpoint,
+    )>,
+) -> Result<(), deno_error::JsErrorBox> {
+    let js = state.borrow::<SharedJsState>().clone();
+    with_state(&js, |s| {
+        let Some(entry) = s.windows.get_mut(&window_id) else {
+            return Err(window_not_found());
+        };
+        match endpoints {
+            Some((anchor, focus)) => entry
+                .dom
+                .set_selection(crate::selection::TextSelection::new(anchor, focus)),
+            None => entry.dom.clear_selection(),
+        }
+        if let Some(window) = entry.window.as_ref() {
+            window.request_redraw();
+        }
+        Ok(())
     })
 }
 

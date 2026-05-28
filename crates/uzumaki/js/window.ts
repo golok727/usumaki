@@ -27,6 +27,7 @@ import {
   type WindowEventName,
   type WindowEventHandler,
 } from 'ext:uzumaki/events.ts';
+import { Selection } from 'ext:uzumaki/selection.ts';
 import { clearWindowNodes, nodeCount } from 'ext:uzumaki/registry.ts';
 
 const windowsByLabel = new Map<string, Window>();
@@ -368,6 +369,15 @@ export class Window {
 
   createTextNode(text: string): UzTextNode {
     return new UzTextNode(this, text);
+  }
+
+  /**
+   * Live view of the window's text selection. Read endpoints through
+   * `anchor`/`focus`; mutate via `collapse`, `extend`, `setBaseAndExtent`,
+   * or `empty`. Programmatic mutations dispatch `selectionchange`.
+   */
+  getSelection(): Selection {
+    return new Selection(this, this._native.getSelection());
   }
 
   get isDisposed(): boolean {

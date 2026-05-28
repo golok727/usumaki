@@ -37,6 +37,8 @@ export interface CoreWindow {
   readonly innerWidth: number | null;
   readonly innerHeight: number | null;
 
+  getSelection(): CoreSelection;
+
   title: string | null;
   visible: boolean | null;
   transparent: boolean | null;
@@ -76,6 +78,26 @@ export interface CoreWindow {
 
 export interface CoreNodeConstructor {
   new (windowId: number, nodeId: NodeId): CoreNode;
+}
+
+export interface CoreSelection {
+  readonly windowId: number;
+  readonly isActive: boolean;
+  readonly isCollapsed: boolean;
+  readonly anchorNodeId: NodeId | null;
+  readonly anchorOffset: number;
+  readonly focusNodeId: NodeId | null;
+  readonly focusOffset: number;
+  readonly text: string;
+  collapse(nodeId: NodeId, offset: number): void;
+  extend(nodeId: NodeId, offset: number): void;
+  set(
+    anchorNodeId: NodeId,
+    anchorOffset: number,
+    focusNodeId: NodeId,
+    focusOffset: number,
+  ): void;
+  empty(): void;
 }
 
 export interface CoreNode {

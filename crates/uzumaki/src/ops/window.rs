@@ -469,6 +469,11 @@ impl CoreWindow {
         Ok(())
     }
 
+    #[cppgc]
+    pub fn getSelection(&self) -> crate::ops::dom::CoreSelection {
+        crate::ops::dom::CoreSelection::new(self.id)
+    }
+
     /** inner width in logical pixels */
     #[getter]
     pub fn innerWidth(&self, state: &OpState) -> Option<u32> {

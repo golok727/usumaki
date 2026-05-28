@@ -236,6 +236,22 @@ declare module 'uzumaki' {
     /** The window's theme preference that produced `theme`. */
     readonly preference: WindowTheme;
   }
+  interface UzSelectionEndpoint {
+    /** The text-bearing node the endpoint resolves to. */
+    readonly node: UzNode;
+    /** Grapheme offset within `node`. */
+    readonly offset: number;
+  }
+  interface UzSelectionChangeEvent<
+    T extends UzNode = UzNode,
+  > extends UzumakiEvent<T> {
+    /** Where the user started the selection. `null` when there is no selection. */
+    readonly anchor: UzSelectionEndpoint | null;
+    /** Where the selection currently ends (the moving end). `null` when empty. */
+    readonly focus: UzSelectionEndpoint | null;
+    /** True when anchor and focus resolve to the same point. */
+    readonly isCollapsed: boolean;
+  }
   /** DOM-style events that can be attached to any element. */
   interface UzEventMap {
     /** Pointer moved over the element. Bubbles. */
@@ -285,6 +301,11 @@ declare module 'uzumaki' {
     close: UzumakiEvent;
     resize: UzumakiResizeEvent;
     themechange: UzThemeChangeEvent;
+    /**
+     * The active text selection inside this window changed. Fires for view-level
+     * selection on `selectable` containers. Does not bubble.
+     */
+    selectionchange: UzSelectionChangeEvent;
   }
   type EventName = keyof UzEventMap;
   type WindowEventName = keyof WindowEventMap;
@@ -431,6 +452,32 @@ declare module 'uzumaki' {
     get checked(): boolean;
   }
   //#endregion
+  //#region js/selection.d.ts
+  /** Shape accepted by `Selection.set` — node plus grapheme offset. */
+  interface UzSelectionEndpointInit {
+    node: UzNode;
+    offset: number;
+  }
+  /**
+   * Live view of a window's text selection. Read endpoints through `anchor` /
+   * `focus`; mutate via `collapse`, `extend`, `setBaseAndExtent`, or `empty`.
+   * Programmatic mutations emit `selectionchange` on the window.
+   */
+  declare class Selection {
+    private readonly _window;
+    private readonly _core;
+    get isActive(): boolean;
+    get isCollapsed(): boolean;
+    get anchor(): UzSelectionEndpoint | null;
+    get focus(): UzSelectionEndpoint | null;
+    get text(): string;
+    collapse(node: UzNode, offset: number): void;
+    extend(node: UzNode, offset: number): void;
+    set(anchor: UzSelectionEndpointInit, focus?: UzSelectionEndpointInit): void;
+    empty(): void;
+    private _emit;
+  }
+  //#endregion
   //#region js/window.d.ts
   type AnimationFrameCallback = (timestamp: number) => void;
   declare const ELEMENT_CONSTRUCTORS: {
@@ -518,6 +565,12 @@ declare module 'uzumaki' {
     createElement<T extends ElementTagName>(type: T): ElementForTag<T>;
     createElement(type: string): Element<any>;
     createTextNode(text: string): UzTextNode;
+    /**
+     * Live view of the window's text selection. Read endpoints through
+     * `anchor`/`focus`; mutate via `collapse`, `extend`, `setBaseAndExtent`,
+     * or `empty`. Programmatic mutations dispatch `selectionchange`.
+     */
+    getSelection(): Selection;
     get isDisposed(): boolean;
     get remBase(): number;
     set remBase(value: number);
@@ -580,6 +633,7 @@ declare module 'uzumaki' {
     EventPhase,
     EventType,
     RUNTIME_VERSION,
+    Selection,
     UzButtonElement,
     UzCheckboxElement,
     type UzClipboardEvent,
