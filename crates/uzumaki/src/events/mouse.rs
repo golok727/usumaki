@@ -721,7 +721,6 @@ pub fn handle_mouse_input(
                                 4 => is.select_all(renderer),
                                 _ => is.move_to_point(relative_x, relative_y, renderer),
                             }
-                            is.reset_blink();
                         }
                     }
 

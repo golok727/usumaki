@@ -1105,12 +1105,8 @@ fn handle_window_event(
                 if let Some(entry) = s.windows.get_mut(&wid) {
                     entry.state.focused = focused;
                     entry.dom.window_focused = focused;
-                    if focused
-                        && let Some(nid) = entry.dom.focused_node
-                        && let Some(node) = entry.dom.nodes.get_mut(nid)
-                        && let Some(is) = node.data.as_text_input_mut()
-                    {
-                        is.reset_blink();
+                    if focused {
+                        entry.dom.caret_blink.reset();
                     }
                     if focused && let Some(window) = entry.window.as_mut() {
                         events::update_ime_cursor_area(&mut entry.dom, window);
@@ -1279,6 +1275,20 @@ fn handle_window_event(
         _ => {}
     }
 
+    if refresh_blink_timer {
+        with_state(state, |s| {
+            if let Some(entry) = s.windows.get_mut(&wid) {
+                entry.dom.caret_blink.reset();
+            }
+        });
+        refresh_cursor_blink_timer(state, wid);
+        needs_redraw |= with_state_ref(state, |s| {
+            s.windows
+                .get(&wid)
+                .is_some_and(|e| e.dom.next_caret_blink_in(e.dom.window_focused).is_some())
+        });
+    }
+
     if needs_redraw {
         with_state_ref(state, |s| {
             if let Some(entry) = s.windows.get(&wid)
@@ -1287,10 +1297,6 @@ fn handle_window_event(
                 window.request_redraw();
             }
         });
-    }
-
-    if refresh_blink_timer {
-        refresh_cursor_blink_timer(state, wid);
     }
 }
 

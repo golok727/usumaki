@@ -580,14 +580,7 @@ impl UIState {
             self.text_selection.clear();
         }
         self.focused_node = Some(node_id);
-        if is_edit_context {
-            self.caret_blink.reset();
-        }
-        if let Some(node) = self.nodes.get_mut(node_id)
-            && let Some(is) = node.as_text_input_mut()
-        {
-            is.reset_blink();
-        }
+        self.caret_blink.reset();
     }
 
     /// Clear the view selection (does not touch focused input).

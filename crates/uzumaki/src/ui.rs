@@ -162,10 +162,7 @@ impl UIState {
     pub fn next_caret_blink_in(&self, window_focused: bool) -> Option<std::time::Duration> {
         let fid = self.focused_node?;
         let node = self.nodes.get(fid)?;
-        if let Some(input) = node.as_text_input() {
-            return input.blink.next_toggle_in(true, window_focused);
-        }
-        if node.is_edit_context_root() {
+        if node.is_text_input() || node.is_edit_context_root() {
             return self.caret_blink.next_toggle_in(true, window_focused);
         }
         None

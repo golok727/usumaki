@@ -179,7 +179,6 @@ impl CaretBlink {
 pub struct InputState {
     pub editor: PlainEditor<TextBrush>,
     pub placeholder: String,
-    pub blink: CaretBlink,
     pub disabled: bool,
     pub secure: bool,
     pub multiline: bool,
@@ -207,7 +206,6 @@ impl InputState {
         Self {
             editor: PlainEditor::new(16.0),
             placeholder: String::new(),
-            blink: CaretBlink::new(),
             disabled: false,
             secure: false,
             multiline: true,
@@ -293,7 +291,6 @@ impl InputState {
         {
             self.push_history(change, kind, inserted_for_batching);
         }
-        self.reset_blink();
         Some(())
     }
 
@@ -433,7 +430,6 @@ impl InputState {
         self.apply_change(&change, true, renderer);
         self.history.redo_stack.push(change);
         self.history.reset_batching();
-        self.reset_blink();
         Some(EditEvent {
             kind: EditKind::HistoryUndo,
             inserted: None,
@@ -448,7 +444,6 @@ impl InputState {
         self.apply_change(&change, false, renderer);
         self.history.undo_stack.push_back(change);
         self.history.reset_batching();
-        self.reset_blink();
         Some(EditEvent {
             kind: EditKind::HistoryRedo,
             inserted: None,
@@ -581,7 +576,6 @@ impl InputState {
             (MoveAction::TextEnd, false) => d.move_to_text_end(),
             (MoveAction::TextEnd, true) => d.select_to_text_end(),
         });
-        self.reset_blink();
     }
 
     pub fn move_left(&mut self, extend: bool, renderer: &mut TextRenderer) {
@@ -618,7 +612,6 @@ impl InputState {
     pub fn move_to_point(&mut self, x: f32, y: f32, renderer: &mut TextRenderer) {
         self.break_undo_batch();
         self.drive(renderer, |d| d.move_to_point(x, y));
-        self.reset_blink();
     }
 
     pub fn extend_selection_to_point(&mut self, x: f32, y: f32, renderer: &mut TextRenderer) {
@@ -628,19 +621,16 @@ impl InputState {
     pub fn select_word_at_point(&mut self, x: f32, y: f32, renderer: &mut TextRenderer) {
         self.break_undo_batch();
         self.drive(renderer, |d| d.select_word_at_point(x, y));
-        self.reset_blink();
     }
 
     pub fn select_line_at_point(&mut self, x: f32, y: f32, renderer: &mut TextRenderer) {
         self.break_undo_batch();
         self.drive(renderer, |d| d.select_line_at_point(x, y));
-        self.reset_blink();
     }
 
     pub fn select_all(&mut self, renderer: &mut TextRenderer) {
         self.break_undo_batch();
         self.drive(renderer, |d| d.select_all());
-        self.reset_blink();
     }
 
     // Ime
@@ -681,18 +671,6 @@ impl InputState {
 
     pub fn set_scale(&mut self, scale: f32) {
         self.editor.set_scale(scale);
-    }
-
-    pub fn reset_blink(&mut self) {
-        self.blink.reset();
-    }
-
-    pub fn blink_visible(&self, focused: bool, window_focused: bool) -> bool {
-        self.blink.visible(focused, window_focused)
-    }
-
-    pub fn next_blink_toggle_in(&self, focused: bool, window_focused: bool) -> Option<Duration> {
-        self.blink.next_toggle_in(focused, window_focused)
     }
 
     /// Classify the edit a key would produce without applying it, so a
@@ -993,35 +971,27 @@ mod tests {
 
     #[test]
     fn blink_not_visible_unfocused() {
-        let is = InputState::new();
-        assert!(!is.blink_visible(false, true));
-    }
-
-    #[test]
-    fn blink_not_visible_window_unfocused() {
-        let is = InputState::new();
-        assert!(!is.blink_visible(true, false));
-    }
-
-    #[test]
-    fn next_blink_toggle_is_absent_when_unfocused() {
-        let is = InputState::new();
-        assert!(is.next_blink_toggle_in(false, true).is_none());
+        let blink = CaretBlink::new();
+        assert!(!blink.visible(false, true));
+        assert!(!blink.visible(true, false));
+        assert!(blink.next_toggle_in(false, true).is_none());
     }
 
     #[test]
     fn next_blink_toggle_matches_visible_phase() {
-        let mut is = InputState::new();
-        is.blink.reset = Instant::now() - Duration::from_millis(200);
-        let next = is.next_blink_toggle_in(true, true).unwrap();
+        let blink = CaretBlink {
+            reset: Instant::now() - Duration::from_millis(200),
+        };
+        let next = blink.next_toggle_in(true, true).unwrap();
         assert!((329..=330).contains(&next.as_millis()));
     }
 
     #[test]
     fn next_blink_toggle_matches_hidden_phase() {
-        let mut is = InputState::new();
-        is.blink.reset = Instant::now() - Duration::from_millis(700);
-        let next = is.next_blink_toggle_in(true, true).unwrap();
+        let blink = CaretBlink {
+            reset: Instant::now() - Duration::from_millis(700),
+        };
+        let next = blink.next_toggle_in(true, true).unwrap();
         assert!((359..=360).contains(&next.as_millis()));
     }
 

@@ -11,7 +11,7 @@ const SELECTION_COLOR: VelloColor = VelloColor::from_rgba8(56, 121, 185, 128);
 const PLACEHOLDER_COLOR: VelloColor = VelloColor::from_rgba8(128, 128, 128, 255);
 const PREEDIT_BG_COLOR: VelloColor = VelloColor::from_rgba8(50, 50, 60, 180);
 const PREEDIT_UNDERLINE_COLOR: VelloColor = VelloColor::from_rgba8(180, 180, 180, 255);
-const CARET_COLOR: VelloColor = VelloColor::from_rgba8(115, 115, 115, 255);
+const CARET_COLOR: VelloColor = VelloColor::from_rgba8(226, 165, 46, 255);
 const CARET_WIDTH: f64 = 2.0;
 
 /// Borrowed view of an input node. Holds references to the live editor state
@@ -21,7 +21,7 @@ pub struct InputView<'a> {
     pub state: &'a InputState,
     pub text_style: &'a TextStyle,
     pub focused: bool,
-    pub window_focused: bool,
+    pub caret_visible: bool,
     pub scroll_offset_x: f32,
     pub scroll_offset_y: f32,
 }
@@ -108,17 +108,11 @@ impl InputPainter<'_> {
         self.scene.pop_layer();
     }
 
-    fn blink_visible(&self) -> bool {
-        self.view
-            .state
-            .blink_visible(self.view.focused, self.view.window_focused)
-    }
-
     /// Caret geometry, only when it should be visible (blink on, or a preedit
     /// is composing). Returns `None` otherwise.
     fn cursor_rect(&mut self) -> Option<BoundingBox> {
         let state = self.view.state;
-        if !self.blink_visible() && state.preedit.is_none() {
+        if !self.view.caret_visible && state.preedit.is_none() {
             return None;
         }
         if state.secure {
@@ -143,7 +137,7 @@ impl InputPainter<'_> {
     }
 
     fn should_paint_caret(&self) -> bool {
-        self.view.focused && self.blink_visible() && self.view.state.preedit.is_none()
+        self.view.focused && self.view.caret_visible && self.view.state.preedit.is_none()
     }
 
     fn line_height(&self) -> f32 {

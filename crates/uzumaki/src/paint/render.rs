@@ -17,7 +17,7 @@ use crate::text::{LEAF_BRUSH_ID, TextBrush, TextRenderer};
 use crate::ui::UIState;
 
 const SELECTION_COLOR: VelloColor = VelloColor::from_rgba8(56, 121, 185, 128);
-const CARET_COLOR: VelloColor = VelloColor::from_rgba8(115, 115, 115, 255);
+const CARET_COLOR: VelloColor = VelloColor::from_rgba8(226, 165, 46, 255);
 const CARET_WIDTH: f64 = 2.0;
 
 /// View-selection state resolved once per frame and threaded through paint.
@@ -209,11 +209,15 @@ impl<'a> Painter<'a> {
     ) {
         let node = &self.dom.nodes[node_id];
         if let Some(state) = node.as_text_input() {
+            let focused = self.dom.focused_node == Some(node_id);
             let view = InputView {
                 state,
                 text_style: &style.text,
-                focused: self.dom.focused_node == Some(node_id),
-                window_focused: self.dom.window_focused,
+                focused,
+                caret_visible: self
+                    .dom
+                    .caret_blink
+                    .visible(focused, self.dom.window_focused),
                 scroll_offset_x: node.scroll_state.scroll_offset_x,
                 scroll_offset_y: node.scroll_state.scroll_offset_y,
             };
