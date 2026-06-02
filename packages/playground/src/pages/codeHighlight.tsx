@@ -91,6 +91,10 @@ export function ShikiPage() {
       <Panel title="Preview">
         <view
           selectable
+          editContext
+          onTextUpdate={(e) => {
+            console.log(e.inputType);
+          }}
           p={16}
           flex={1}
           flexDir="col"

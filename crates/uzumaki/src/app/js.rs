@@ -594,6 +594,7 @@ const ET_INPUT: f64 = 20.0;
 const ET_FOCUS: f64 = 21.0;
 const ET_BLUR: f64 = 22.0;
 const ET_BEFORE_INPUT: f64 = 23.0;
+const ET_TEXT_UPDATE: f64 = 28.0;
 const ET_COPY: f64 = 25.0;
 const ET_CUT: f64 = 26.0;
 const ET_PASTE: f64 = 27.0;
@@ -643,6 +644,7 @@ impl JSGlobalEventDispatch {
             ),
             AppEvent::Input(e) => (&self.input, input_args(scope, ET_INPUT, e)),
             AppEvent::BeforeInput(e) => (&self.input, input_args(scope, ET_BEFORE_INPUT, e)),
+            AppEvent::TextUpdate(e) => (&self.input, input_args(scope, ET_TEXT_UPDATE, e)),
             AppEvent::Focus(e) => (&self.focus, focus_args(scope, ET_FOCUS, e)),
             AppEvent::Blur(e) => (&self.focus, focus_args(scope, ET_BLUR, e)),
             AppEvent::Copy(e) => (&self.clipboard, clipboard_args(scope, ET_COPY, e)),
@@ -783,7 +785,7 @@ fn input_args<'s>(
         v_num(scope, ty),
         v_num(scope, e.window_id as f64),
         v_node(scope, e.node_id),
-        v_str(scope, &e.input_type),
+        v_str(scope, e.input_type),
         v_opt_str(scope, &e.data),
     ]
 }
@@ -1044,12 +1046,23 @@ fn handle_window_event(
                                     );
                                 let (button_redraw, button_events) =
                                     events::handle_key_for_button(&mut entry.dom, wid, &key_event);
+                                let edit_context_events = if input_prevented {
+                                    Vec::new()
+                                } else {
+                                    events::handle_key_for_edit_context(
+                                        &mut entry.dom,
+                                        wid,
+                                        &key_event,
+                                        modifiers,
+                                    )
+                                };
                                 if redraw || checkbox_redraw || button_redraw {
                                     needs_redraw = true;
                                 }
                                 let mut all = events;
                                 all.extend(checkbox_events);
                                 all.extend(button_events);
+                                all.extend(edit_context_events);
                                 all
                             })
                         });
@@ -1171,7 +1184,7 @@ fn handle_window_event(
                         Some(vec![events::AppEvent::Input(events::UzInputEvent {
                             window_id: wid,
                             node_id: fid,
-                            input_type: "insertCompositionText".to_string(),
+                            input_type: "insertCompositionText",
                             data: Some(text.clone()),
                         })])
                     })

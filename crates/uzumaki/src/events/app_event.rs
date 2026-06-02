@@ -22,6 +22,7 @@ pub enum AppEvent {
     Resize(UzResizeEvent),
     Input(UzInputEvent),
     BeforeInput(UzInputEvent),
+    TextUpdate(UzInputEvent),
     Focus(UzFocusEvent),
     Blur(UzFocusEvent),
     Copy(UzClipboardEvent),

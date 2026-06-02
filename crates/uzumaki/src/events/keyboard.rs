@@ -1,6 +1,6 @@
 use winit::keyboard::{Key, NamedKey};
 
-use crate::input::KeyResult;
+use crate::input::{KeyResult, preview_key_edit};
 use crate::selection::{Affinity, TextSelection};
 use crate::text::apply_text_style_to_editor;
 use crate::ui::UIState;
@@ -76,9 +76,43 @@ pub fn build_beforeinput_event(
     Some(AppEvent::BeforeInput(UzInputEvent {
         window_id: wid,
         node_id: fid,
-        input_type: kind.input_type().to_string(),
+        input_type: kind.input_type(),
         data,
     }))
+}
+
+/// Fire a `textupdate` event describing the edit a key would produce on the
+/// focused editContext view. The framework never mutates the view's text —
+/// JS applies the edit to its own text buffer and re-renders.
+pub fn handle_key_for_edit_context(
+    dom: &mut UIState,
+    wid: u32,
+    key_event: &winit::event::KeyEvent,
+    modifiers: KeyModifiers,
+) -> Vec<AppEvent> {
+    use winit::event::ElementState;
+
+    if key_event.state != ElementState::Pressed {
+        return Vec::new();
+    }
+    let Some(fid) = dom.focused_node else {
+        return Vec::new();
+    };
+    let Some(node) = dom.nodes.get(fid) else {
+        return Vec::new();
+    };
+    if !node.is_edit_context_root() {
+        return Vec::new();
+    }
+    let Some((kind, data)) = preview_key_edit(&key_event.logical_key, modifiers, true) else {
+        return Vec::new();
+    };
+    vec![AppEvent::TextUpdate(UzInputEvent {
+        window_id: wid,
+        node_id: fid,
+        input_type: kind.input_type(),
+        data,
+    })]
 }
 
 /// Handle keyboard input for the focused input element. Called AFTER the raw key
@@ -126,11 +160,10 @@ pub fn handle_key_for_input(
                 );
                 match result {
                     KeyResult::Edit(edit) => {
-                        let input_type = edit.kind.input_type();
                         events.push(AppEvent::Input(UzInputEvent {
                             window_id: wid,
                             node_id: focused_id,
-                            input_type: input_type.to_string(),
+                            input_type: edit.kind.input_type(),
                             data: edit.inserted,
                         }));
                         needs_redraw = true;
@@ -197,7 +230,7 @@ pub fn handle_key_for_checkbox(
         vec![AppEvent::Input(UzInputEvent {
             window_id: wid,
             node_id: focused_id,
-            input_type: "toggle".to_string(),
+            input_type: "toggle",
             data: None,
         })],
     )

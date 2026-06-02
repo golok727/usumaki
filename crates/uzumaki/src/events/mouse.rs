@@ -870,7 +870,7 @@ pub fn handle_mouse_input(
                     events.push(AppEvent::Input(UzInputEvent {
                         window_id: wid,
                         node_id: active,
-                        input_type: "toggle".to_string(),
+                        input_type: "toggle",
                         data: None,
                     }));
                 }

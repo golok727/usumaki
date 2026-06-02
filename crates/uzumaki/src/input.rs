@@ -682,48 +682,59 @@ impl InputState {
         key: &Key,
         modifiers: crate::events::KeyModifiers,
     ) -> Option<(EditKind, Option<String>)> {
-        use crate::events::KeyModifiers;
         if self.disabled {
             return None;
         }
-
-        let shift = modifiers.contains(KeyModifiers::SHIFT);
-        let ctrl = modifiers.contains(KeyModifiers::CTRL);
-
-        match key {
-            Key::Character(ch) => {
-                if ctrl {
-                    return match () {
-                        _ if ch.eq_ignore_ascii_case("z") && !shift => {
-                            Some((EditKind::HistoryUndo, None))
-                        }
-                        _ if (ch.eq_ignore_ascii_case("z") && shift)
-                            || ch.eq_ignore_ascii_case("y") =>
-                        {
-                            Some((EditKind::HistoryRedo, None))
-                        }
-                        _ => None,
-                    };
-                }
-                Some((EditKind::Insert, Some(ch.to_string())))
-            }
-            Key::Named(named) => match named {
-                NamedKey::Backspace if ctrl => Some((EditKind::DeleteWordBackward, None)),
-                NamedKey::Backspace => Some((EditKind::DeleteBackward, None)),
-                NamedKey::Delete if ctrl => Some((EditKind::DeleteWordForward, None)),
-                NamedKey::Delete => Some((EditKind::DeleteForward, None)),
-                NamedKey::Undo => Some((EditKind::HistoryUndo, None)),
-                NamedKey::Redo => Some((EditKind::HistoryRedo, None)),
-                NamedKey::Space => Some((EditKind::Insert, Some(" ".to_string()))),
-                NamedKey::Enter if self.multiline => {
-                    Some((EditKind::Insert, Some("\n".to_string())))
-                }
-                _ => None,
-            },
-            _ => None,
-        }
+        preview_key_edit(key, modifiers, self.multiline)
     }
+}
 
+/// Classify the edit a key would produce, independent of any editor state.
+/// Used by inputs (via [`InputState::preview_edit`]) and by editContext views
+/// to decide what `beforeinput`/`input` payload to emit.
+pub fn preview_key_edit(
+    key: &Key,
+    modifiers: crate::events::KeyModifiers,
+    multiline: bool,
+) -> Option<(EditKind, Option<String>)> {
+    use crate::events::KeyModifiers;
+
+    let shift = modifiers.contains(KeyModifiers::SHIFT);
+    let ctrl = modifiers.contains(KeyModifiers::CTRL);
+
+    match key {
+        Key::Character(ch) => {
+            if ctrl {
+                return match () {
+                    _ if ch.eq_ignore_ascii_case("z") && !shift => {
+                        Some((EditKind::HistoryUndo, None))
+                    }
+                    _ if (ch.eq_ignore_ascii_case("z") && shift)
+                        || ch.eq_ignore_ascii_case("y") =>
+                    {
+                        Some((EditKind::HistoryRedo, None))
+                    }
+                    _ => None,
+                };
+            }
+            Some((EditKind::Insert, Some(ch.to_string())))
+        }
+        Key::Named(named) => match named {
+            NamedKey::Backspace if ctrl => Some((EditKind::DeleteWordBackward, None)),
+            NamedKey::Backspace => Some((EditKind::DeleteBackward, None)),
+            NamedKey::Delete if ctrl => Some((EditKind::DeleteWordForward, None)),
+            NamedKey::Delete => Some((EditKind::DeleteForward, None)),
+            NamedKey::Undo => Some((EditKind::HistoryUndo, None)),
+            NamedKey::Redo => Some((EditKind::HistoryRedo, None)),
+            NamedKey::Space => Some((EditKind::Insert, Some(" ".to_string()))),
+            NamedKey::Enter if multiline => Some((EditKind::Insert, Some("\n".to_string()))),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+impl InputState {
     /// Apply an edit previously classified by [`preview_edit`](Self::preview_edit).
     fn apply_edit(
         &mut self,

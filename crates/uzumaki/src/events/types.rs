@@ -89,7 +89,7 @@ pub struct UzResizeEvent {
 pub struct UzInputEvent {
     pub window_id: u32,
     pub node_id: UzNodeId,
-    pub input_type: String,
+    pub input_type: &'static str,
     pub data: Option<String>,
 }
 

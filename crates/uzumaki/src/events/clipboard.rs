@@ -235,7 +235,7 @@ pub fn apply_clipboard_command(
                 events.push(AppEvent::Input(UzInputEvent {
                     window_id: wid,
                     node_id: target_id,
-                    input_type: edit.kind.input_type().to_string(),
+                    input_type: edit.kind.input_type(),
                     data: edit.inserted,
                 }));
                 needs_redraw = true;
@@ -256,7 +256,7 @@ pub fn apply_clipboard_command(
                 events.push(AppEvent::Input(UzInputEvent {
                     window_id: wid,
                     node_id: target_id,
-                    input_type: edit.kind.input_type().to_string(),
+                    input_type: edit.kind.input_type(),
                     data: edit.inserted,
                 }));
                 needs_redraw = true;
