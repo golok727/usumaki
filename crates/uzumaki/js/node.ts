@@ -21,11 +21,27 @@ export const NodeType = {
 export class UzNode {
   protected readonly _native: CoreNode;
   readonly window: Window;
+  /**
+   * Strong refs to child wrappers to avoid gc. ( todo find a better approach  use TracedReference?)
+   */
+  private readonly _childWrappers: Set<UzNode> = new Set();
+  private _parentWrapper: UzNode | null = null;
 
   constructor(window: Window, native: CoreNode) {
     this.window = window;
     this._native = native;
     registerNode(this);
+  }
+
+  private _setParentWrapper(parent: UzNode | null): void {
+    if (this._parentWrapper === parent) return;
+    if (this._parentWrapper) {
+      this._parentWrapper._childWrappers.delete(this);
+    }
+    this._parentWrapper = parent;
+    if (parent) {
+      parent._childWrappers.add(this);
+    }
   }
 
   get nodeId(): NodeId {
@@ -71,6 +87,7 @@ export class UzNode {
   appendChild<T extends UzNode>(child: T): T {
     if (!this.window.isDisposed) {
       this._native.appendChild(child._native);
+      child._setParentWrapper(this);
     }
     return child;
   }
@@ -78,6 +95,7 @@ export class UzNode {
   insertBefore<T extends UzNode>(child: T, before: UzNode | null): T {
     if (!this.window.isDisposed) {
       this._native.insertBefore(child._native, before?._native ?? null);
+      child._setParentWrapper(this);
     }
     return child;
   }
@@ -85,6 +103,7 @@ export class UzNode {
   removeChild<T extends UzNode>(child: T): T {
     if (!this.window.isDisposed) {
       this._native.removeChild(child._native);
+      if (child._parentWrapper === this) child._setParentWrapper(null);
     }
     return child;
   }
@@ -95,12 +114,17 @@ export class UzNode {
   remove(): void {
     if (!this.window.isDisposed) {
       this._native.remove();
+      this._setParentWrapper(null);
     }
   }
 
   clearChildren(): void {
     if (!this.window.isDisposed) {
       this._native.clearChildren();
+      for (const child of this._childWrappers) {
+        child._parentWrapper = null;
+      }
+      this._childWrappers.clear();
     }
   }
 
