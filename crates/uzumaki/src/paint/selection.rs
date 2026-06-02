@@ -331,10 +331,16 @@ impl UIState {
 
     /// Set the active view selection. Clears any focused input.
     pub fn set_selection(&mut self, selection: TextSelection) {
-        if selection.is_set() {
+        if selection.is_set()
+            && !self
+                .focused_node
+                .and_then(|id| self.nodes.get(id))
+                .is_some_and(|n| n.is_edit_context_root())
+        {
             self.focused_node = None;
         }
         self.text_selection = selection;
+        self.caret_blink.reset();
     }
 
     pub fn selection_root(&self, selection: &TextSelection) -> Option<UzNodeId> {
@@ -566,8 +572,17 @@ impl UIState {
     /// Focus an element node. Clears any active view selection and blurs the
     /// previously focused input.
     pub fn focus_element(&mut self, node_id: UzNodeId) {
-        self.text_selection.clear();
+        let is_edit_context = self
+            .nodes
+            .get(node_id)
+            .is_some_and(|n| n.is_edit_context_root());
+        if !is_edit_context {
+            self.text_selection.clear();
+        }
         self.focused_node = Some(node_id);
+        if is_edit_context {
+            self.caret_blink.reset();
+        }
         if let Some(node) = self.nodes.get_mut(node_id)
             && let Some(is) = node.as_text_input_mut()
         {

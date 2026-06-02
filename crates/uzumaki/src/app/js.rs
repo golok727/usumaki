@@ -213,10 +213,8 @@ impl JsWindow {
         let kind = AttributeKind::parse(name);
         match kind {
             AttributeKind::Element(name) => {
-                if let Some(node) = self.dom.nodes.get_mut(node_id)
-                    && let Some(el) = node.as_element_mut()
-                {
-                    el.set_attr(name, AttrValue::from(value));
+                if let Some(node) = self.dom.nodes.get_mut(node_id) {
+                    node.set_attr(name, AttrValue::from(value));
                 }
             }
             AttributeKind::Style(prop, variant) => {
@@ -243,9 +241,7 @@ impl JsWindow {
 
         match kind {
             AttributeKind::Element(name) => {
-                if let Some(el) = node.as_element_mut() {
-                    el.clear_attr(name);
-                }
+                node.clear_attr(name);
             }
             AttributeKind::Style(prop, variant) => {
                 clear_node_style(&mut self.dom, node_id, prop, variant)
@@ -1313,12 +1309,7 @@ fn refresh_cursor_blink_timer(state: &SharedJsState, id: WindowEntryId) {
         entry.cursor_blink_generation = entry.cursor_blink_generation.wrapping_add(1);
         let generation = entry.cursor_blink_generation;
         let focused = entry.dom.window_focused;
-        let next_delay = entry
-            .dom
-            .focused_node
-            .and_then(|focused_id| entry.dom.nodes.get(focused_id))
-            .and_then(|node| node.as_text_input())
-            .and_then(|input| input.next_blink_toggle_in(true, focused));
+        let next_delay = entry.dom.next_caret_blink_in(focused);
         (next_delay.map(|delay| (generation, delay)), proxy)
     });
 
@@ -1346,15 +1337,7 @@ pub fn handle_cursor_blink(state: &SharedJsState, id: WindowEntryId, generation:
         s.windows
             .get(&id)
             .filter(|entry| entry.cursor_blink_generation == generation)
-            .and_then(|entry| {
-                entry
-                    .dom
-                    .focused_node
-                    .and_then(|focused_id| entry.dom.nodes.get(focused_id))
-                    .and_then(|node| node.as_text_input())
-                    .and_then(|input| input.next_blink_toggle_in(true, entry.dom.window_focused))
-                    .map(|_| ())
-            })
+            .and_then(|entry| entry.dom.next_caret_blink_in(entry.dom.window_focused))
             .is_some()
     });
 

@@ -127,10 +127,59 @@ impl DeleteAction {
     }
 }
 
+pub struct CaretBlink {
+    pub reset: Instant,
+}
+
+impl Default for CaretBlink {
+    fn default() -> Self {
+        Self {
+            reset: Instant::now(),
+        }
+    }
+}
+
+impl CaretBlink {
+    const ON_MS: u128 = 530;
+    const CYCLE_MS: u128 = 1060;
+
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn reset(&mut self) {
+        self.reset = Instant::now();
+    }
+
+    pub fn visible(&self, focused: bool, window_focused: bool) -> bool {
+        if !focused || !window_focused {
+            return false;
+        }
+        self.phase_elapsed_ms() < Self::ON_MS
+    }
+
+    pub fn next_toggle_in(&self, focused: bool, window_focused: bool) -> Option<Duration> {
+        if !focused || !window_focused {
+            return None;
+        }
+        let elapsed = self.phase_elapsed_ms();
+        let remaining = if elapsed < Self::ON_MS {
+            Self::ON_MS - elapsed
+        } else {
+            Self::CYCLE_MS - elapsed
+        };
+        Some(Duration::from_millis(remaining.max(1) as u64))
+    }
+
+    fn phase_elapsed_ms(&self) -> u128 {
+        self.reset.elapsed().as_millis() % Self::CYCLE_MS
+    }
+}
+
 pub struct InputState {
     pub editor: PlainEditor<TextBrush>,
     pub placeholder: String,
-    pub blink_reset: Instant,
+    pub blink: CaretBlink,
     pub disabled: bool,
     pub secure: bool,
     pub multiline: bool,
@@ -154,14 +203,11 @@ impl InputState {
         EDITOR_OVERHEAD + self.text().len() + self.placeholder.capacity()
     }
 
-    const BLINK_ON_MS: u128 = 530;
-    const BLINK_CYCLE_MS: u128 = 1060;
-
     pub fn new() -> Self {
         Self {
             editor: PlainEditor::new(16.0),
             placeholder: String::new(),
-            blink_reset: Instant::now(),
+            blink: CaretBlink::new(),
             disabled: false,
             secure: false,
             multiline: true,
@@ -638,31 +684,15 @@ impl InputState {
     }
 
     pub fn reset_blink(&mut self) {
-        self.blink_reset = Instant::now();
+        self.blink.reset();
     }
 
     pub fn blink_visible(&self, focused: bool, window_focused: bool) -> bool {
-        if !focused || !window_focused {
-            return false;
-        }
-        self.blink_phase_elapsed_ms() < Self::BLINK_ON_MS
+        self.blink.visible(focused, window_focused)
     }
 
     pub fn next_blink_toggle_in(&self, focused: bool, window_focused: bool) -> Option<Duration> {
-        if !focused || !window_focused {
-            return None;
-        }
-        let elapsed = self.blink_phase_elapsed_ms();
-        let remaining = if elapsed < Self::BLINK_ON_MS {
-            Self::BLINK_ON_MS - elapsed
-        } else {
-            Self::BLINK_CYCLE_MS - elapsed
-        };
-        Some(Duration::from_millis(remaining.max(1) as u64))
-    }
-
-    fn blink_phase_elapsed_ms(&self) -> u128 {
-        self.blink_reset.elapsed().as_millis() % Self::BLINK_CYCLE_MS
+        self.blink.next_toggle_in(focused, window_focused)
     }
 
     /// Classify the edit a key would produce without applying it, so a
@@ -982,7 +1012,7 @@ mod tests {
     #[test]
     fn next_blink_toggle_matches_visible_phase() {
         let mut is = InputState::new();
-        is.blink_reset = Instant::now() - Duration::from_millis(200);
+        is.blink.reset = Instant::now() - Duration::from_millis(200);
         let next = is.next_blink_toggle_in(true, true).unwrap();
         assert!((329..=330).contains(&next.as_millis()));
     }
@@ -990,7 +1020,7 @@ mod tests {
     #[test]
     fn next_blink_toggle_matches_hidden_phase() {
         let mut is = InputState::new();
-        is.blink_reset = Instant::now() - Duration::from_millis(700);
+        is.blink.reset = Instant::now() - Duration::from_millis(700);
         let next = is.next_blink_toggle_in(true, true).unwrap();
         assert!((359..=360).contains(&next.as_millis()));
     }
