@@ -1,7 +1,7 @@
 use winit::keyboard::{Key, NamedKey};
 
-use crate::input::{KeyResult, preview_key_edit};
-use crate::selection::{Affinity, TextSelection};
+use crate::input::{EditKind, KeyResult, preview_key_edit};
+use crate::selection::{Affinity, SelectionEndpoint, TextSelection};
 use crate::text::apply_text_style_to_editor;
 use crate::ui::UIState;
 use crate::window::Window;
@@ -73,12 +73,59 @@ pub fn build_beforeinput_event(
     let fid = dom.focused_node?;
     let is = dom.nodes.get(fid)?.as_text_input()?;
     let (kind, data) = is.preview_edit(&key_event.logical_key, modifiers)?;
-    Some(AppEvent::BeforeInput(UzInputEvent {
-        window_id: wid,
-        node_id: fid,
-        input_type: kind.input_type(),
+    Some(AppEvent::BeforeInput(UzInputEvent::plain(
+        wid,
+        fid,
+        kind.input_type(),
         data,
-    }))
+    )))
+}
+
+fn compute_edit_range(
+    dom: &UIState,
+    kind: EditKind,
+) -> Option<(SelectionEndpoint, SelectionEndpoint)> {
+    if matches!(kind, EditKind::HistoryUndo | EditKind::HistoryRedo) {
+        return None;
+    }
+    let sel = dom.get_text_selection()?;
+    let focus = sel.focus?;
+    let root = dom.selection_root(&sel)?;
+
+    let (mut start, mut end) = dom.ordered_text_selection()?;
+
+    if !sel.is_collapsed() {
+        return Some((start, end));
+    }
+
+    let flat = dom.flat_index_for_endpoint(focus)?;
+    match kind {
+        EditKind::DeleteBackward => {
+            if flat == 0 {
+                return Some((start, end));
+            }
+            start = dom.endpoint_from_flat_index(root, flat - 1, Affinity::Downstream)?;
+        }
+        EditKind::DeleteForward => {
+            end = dom.endpoint_from_flat_index(root, flat + 1, Affinity::Upstream)?;
+        }
+        EditKind::DeleteWordBackward => {
+            let prev = dom.prev_word_boundary_in_run(root, flat);
+            if prev == flat {
+                return Some((start, end));
+            }
+            start = dom.endpoint_from_flat_index(root, prev, Affinity::Downstream)?;
+        }
+        EditKind::DeleteWordForward => {
+            let next = dom.next_word_boundary_in_run(root, flat);
+            if next == flat {
+                return Some((start, end));
+            }
+            end = dom.endpoint_from_flat_index(root, next, Affinity::Upstream)?;
+        }
+        _ => {}
+    }
+    Some((start, end))
 }
 
 /// Fire a `textupdate` event describing the edit a key would produce on the
@@ -107,11 +154,20 @@ pub fn handle_key_for_edit_context(
     let Some((kind, data)) = preview_key_edit(&key_event.logical_key, modifiers, true) else {
         return Vec::new();
     };
+    let (start_node_id, start_offset, end_node_id, end_offset) = match compute_edit_range(dom, kind)
+    {
+        Some((s, e)) => (Some(s.node), s.offset as u32, Some(e.node), e.offset as u32),
+        None => (None, 0, None, 0),
+    };
     vec![AppEvent::TextUpdate(UzInputEvent {
         window_id: wid,
         node_id: fid,
         input_type: kind.input_type(),
         data,
+        start_node_id,
+        start_offset,
+        end_node_id,
+        end_offset,
     })]
 }
 
@@ -160,12 +216,12 @@ pub fn handle_key_for_input(
                 );
                 match result {
                     KeyResult::Edit(edit) => {
-                        events.push(AppEvent::Input(UzInputEvent {
-                            window_id: wid,
-                            node_id: focused_id,
-                            input_type: edit.kind.input_type(),
-                            data: edit.inserted,
-                        }));
+                        events.push(AppEvent::Input(UzInputEvent::plain(
+                            wid,
+                            focused_id,
+                            edit.kind.input_type(),
+                            edit.inserted,
+                        )));
                         needs_redraw = true;
                     }
                     KeyResult::Blur => {
@@ -227,12 +283,9 @@ pub fn handle_key_for_checkbox(
     *checked = !*checked;
     (
         true,
-        vec![AppEvent::Input(UzInputEvent {
-            window_id: wid,
-            node_id: focused_id,
-            input_type: "toggle",
-            data: None,
-        })],
+        vec![AppEvent::Input(UzInputEvent::plain(
+            wid, focused_id, "toggle", None,
+        ))],
     )
 }
 

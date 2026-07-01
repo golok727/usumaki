@@ -91,6 +91,32 @@ pub struct UzInputEvent {
     pub node_id: UzNodeId,
     pub input_type: &'static str,
     pub data: Option<String>,
+    /// Start of the range the edit replaces, in tree coords. Populated for
+    /// `textupdate` on `editContext` views; `None` elsewhere.
+    pub start_node_id: Option<UzNodeId>,
+    pub start_offset: u32,
+    pub end_node_id: Option<UzNodeId>,
+    pub end_offset: u32,
+}
+
+impl UzInputEvent {
+    pub fn plain(
+        window_id: u32,
+        node_id: UzNodeId,
+        input_type: &'static str,
+        data: Option<String>,
+    ) -> Self {
+        Self {
+            window_id,
+            node_id,
+            input_type,
+            data,
+            start_node_id: None,
+            start_offset: 0,
+            end_node_id: None,
+            end_offset: 0,
+        }
+    }
 }
 
 #[derive(Serialize)]

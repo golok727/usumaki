@@ -867,12 +867,9 @@ pub fn handle_mouse_input(
                     && let Some(checked) = node.as_checkbox_input_mut()
                 {
                     *checked = !*checked;
-                    events.push(AppEvent::Input(UzInputEvent {
-                        window_id: wid,
-                        node_id: active,
-                        input_type: "toggle",
-                        data: None,
-                    }));
+                    events.push(AppEvent::Input(UzInputEvent::plain(
+                        wid, active, "toggle", None,
+                    )));
                 }
                 if let Some(target) = target_node {
                     let (local_x, local_y) = local_offset(dom, target, x, y);

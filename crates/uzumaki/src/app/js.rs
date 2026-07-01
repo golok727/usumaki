@@ -787,6 +787,10 @@ fn input_args<'s>(
         v_node(scope, e.node_id),
         v_str(scope, e.input_type),
         v_opt_str(scope, &e.data),
+        v_opt_node(scope, e.start_node_id),
+        v_num(scope, e.start_offset as f64),
+        v_opt_node(scope, e.end_node_id),
+        v_num(scope, e.end_offset as f64),
     ]
 }
 
@@ -1181,12 +1185,12 @@ fn handle_window_event(
                         let _edit = is.commit_ime_text(&text, &mut window.text_renderer)?;
                         events::update_ime_cursor_area(&mut entry.dom, window);
                         needs_redraw = true;
-                        Some(vec![events::AppEvent::Input(events::UzInputEvent {
-                            window_id: wid,
-                            node_id: fid,
-                            input_type: "insertCompositionText",
-                            data: Some(text.clone()),
-                        })])
+                        Some(vec![events::AppEvent::Input(events::UzInputEvent::plain(
+                            wid,
+                            fid,
+                            "insertCompositionText",
+                            Some(text.clone()),
+                        ))])
                     })
                 });
                 if let Some(events) = input_events {

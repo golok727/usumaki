@@ -84,6 +84,16 @@ export interface UzInputEvent<
   readonly inputType: string;
   /** The inserted text, or `null` for deletions and history edits. */
   readonly data: string | null;
+  /**
+   * Start of the range this edit replaces, in tree coordinates. Populated on
+   * `textupdate` fired by an `editContext` view; `null` on regular input
+   * events. `endNode`/`endOffset` mark the other bound. When start and end
+   * are equal the edit is an insertion at a caret point.
+   */
+  readonly startNode: UzNode | null;
+  readonly startOffset: number;
+  readonly endNode: UzNode | null;
+  readonly endOffset: number;
 }
 
 export interface UzFocusEvent<
@@ -415,6 +425,10 @@ export function buildDomEvent(
       value: payload?.value ?? '',
       inputType: payload?.inputType ?? '',
       data: payload?.data ?? null,
+      startNode: payload?.startNode ?? null,
+      startOffset: payload?.startOffset ?? 0,
+      endNode: payload?.endNode ?? null,
+      endOffset: payload?.endOffset ?? 0,
     }) as UzInputEvent;
   }
 
