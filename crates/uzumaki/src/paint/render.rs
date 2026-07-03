@@ -158,7 +158,7 @@ impl<'a> Painter<'a> {
         let child_hit_transform = hit_transform * scroll_translate;
 
         if needs_clip {
-            scene.push_clip_layer(Fill::NonZero, transform, &content_box.to_rect());
+            scene.push_clip_layer(Fill::NonZero, transform, &Rect::from(content_box));
         }
 
         let child_count = dom.nodes[node_id].layout_children.borrow().len();

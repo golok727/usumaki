@@ -18,7 +18,10 @@ pub(crate) fn local_offset(dom: &UIState, node_id: UzNodeId, x: f32, y: f32) -> 
         .get(node_id)
         .and_then(|n| n.hitbox_id)
         .and_then(|hid| dom.hitbox_store.get(hid))
-        .map(|hb| (x - hb.bounds.x as f32, y - hb.bounds.y as f32))
+        .map(|hb| {
+            let bounds = hb.window_aabb();
+            (x - bounds.x as f32, y - bounds.y as f32)
+        })
         .unwrap_or((x, y))
 }
 
@@ -186,7 +189,7 @@ pub fn handle_cursor_moved(
                 let hb = node
                     .hitbox_id
                     .and_then(|hid| dom.hitbox_store.get(hid))?
-                    .bounds;
+                    .window_aabb();
                 Some((
                     scroll_offset_x,
                     scroll_offset_y,
@@ -330,9 +333,11 @@ fn hit_text_in_run(
         let Some(hb) = node.hitbox_id.and_then(|hid| dom.hitbox_store.get(hid)) else {
             continue;
         };
-        let dist = point_to_rect_dist(mx, my, &hb.bounds);
-        if best.is_none() || dist < best.unwrap().1 {
-            best = Some((entry.layout_node_id, dist, hb.bounds));
+        let bounds = hb.window_aabb();
+        let dist = point_to_rect_dist(mx, my, &bounds);
+
+        if best.map_or(true, |(_, best_dist, _)| dist < best_dist) {
+            best = Some((entry.layout_node_id, dist, bounds));
         }
     }
 
@@ -431,7 +436,7 @@ fn text_range_at_point(
     let bounds = layout_node
         .hitbox_id
         .and_then(|hid| dom.hitbox_store.get(hid))
-        .map(|hb| hb.bounds)?;
+        .map(|hb| hb.window_aabb())?;
 
     if text_len == 0 {
         let endpoint = SelectionEndpoint::new(node_id, 0, Affinity::Downstream);
@@ -664,7 +669,7 @@ pub fn handle_mouse_input(
                         let hb = node
                             .hitbox_id
                             .and_then(|hid| dom.hitbox_store.get(hid))
-                            .map(|hb| hb.bounds);
+                            .map(|hb| hb.window_aabb());
                         (
                             scroll_offset_x,
                             scroll_offset_y,

@@ -325,11 +325,12 @@ pub fn handle_key_for_button(
         .hitbox_id
         .and_then(|hid| dom.hitbox_store.get(hid))
         .map(|hb| {
+            let bounds = hb.window_aabb();
             (
-                (hb.bounds.x + hb.bounds.width / 2.0) as f32,
-                (hb.bounds.y + hb.bounds.height / 2.0) as f32,
-                (hb.bounds.width / 2.0) as f32,
-                (hb.bounds.height / 2.0) as f32,
+                (bounds.x + bounds.width / 2.0) as f32,
+                (bounds.y + bounds.height / 2.0) as f32,
+                (bounds.width / 2.0) as f32,
+                (bounds.height / 2.0) as f32,
             )
         })
         .unwrap_or((0.0, 0.0, 0.0, 0.0));

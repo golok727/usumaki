@@ -2,7 +2,7 @@ use crate::cursor::UzCursorIcon;
 use crate::node::UzNodeId;
 
 use crate::style::{Bounds, ScrollbarStyle, UzStyleRefinement};
-use vello::kurbo::{Affine, Point};
+use vello::kurbo::{Affine, Point, Rect};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct HitboxId(pub u64);
@@ -11,30 +11,37 @@ pub struct HitboxId(pub u64);
 pub struct Hitbox {
     pub id: HitboxId,
     pub node_id: UzNodeId,
-    /// Axis-aligned logical bounds kept for legacy geometry consumers.
-    pub bounds: Bounds,
     /// The node-local hit region before transform.
-    pub local_bounds: Bounds,
-    /// Logical-space transform from local node coordinates to window coordinates.
+    pub local_bounds: Rect,
+    /// Local node coords → window coords.
     pub transform: Affine,
-    /// Screen-space clip from ancestor
-    pub clip: Option<Bounds>,
+    // window space clip
+    pub clip: Option<Rect>,
 }
 
 impl Hitbox {
-    /// Check if this hitbox is hovered according to the current hit test result.
     pub fn is_hovered(&self, hit_state: &HitTestState) -> bool {
         hit_state.is_hovered(self.node_id)
     }
 
     pub fn contains(&self, x: f64, y: f64) -> bool {
+        if !self.window_aabb().contains(x, y) {
+            return false;
+        }
+
         if let Some(clip) = self.clip
-            && !clip.contains(x, y)
+            && !clip.contains((x, y))
         {
             return false;
         }
+
         let local = self.transform.inverse() * Point::new(x, y);
-        self.local_bounds.contains(local.x, local.y)
+        self.local_bounds.contains(local)
+    }
+
+    pub fn window_aabb(&self) -> Bounds {
+        let bounds = self.transform.transform_rect_bbox(self.local_bounds);
+        bounds.into()
     }
 }
 
@@ -74,8 +81,6 @@ impl HitboxStore {
         self.next_id = 0;
     }
 
-    /// Drop any hitbox whose `node_id` no longer passes `keep`.
-    /// Used by Dom::on_node_removed to scrub stale references after a node is freed.
     pub fn retain_by_node(&mut self, mut keep: impl FnMut(UzNodeId) -> bool) {
         self.hitboxes.retain(|h| keep(h.node_id));
     }
@@ -94,15 +99,12 @@ impl HitboxStore {
     ) -> HitboxId {
         let id = HitboxId(self.next_id);
         self.next_id += 1;
-        let bounds = transform.transform_rect_bbox(local_bounds.to_rect());
-        let bounds = Bounds::new(bounds.x0, bounds.y0, bounds.width(), bounds.height());
         self.hitboxes.push(Hitbox {
             id,
             node_id,
-            bounds,
-            local_bounds,
+            local_bounds: local_bounds.into(),
             transform,
-            clip,
+            clip: clip.map(|c| c.into()),
         });
         id
     }

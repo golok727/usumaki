@@ -73,7 +73,7 @@ impl InputPainter<'_> {
         }
 
         self.scene
-            .push_clip_layer(Fill::NonZero, self.transform, &content.to_rect());
+            .push_clip_layer(Fill::NonZero, self.transform, &Rect::from(content));
 
         let display_text = self.view.state.display_text();
         let origin = self.layout_origin(content, &display_text);

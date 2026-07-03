@@ -24,9 +24,10 @@ pub fn input_layout_meta(dom: &UIState, focused_id: UzNodeId) -> Option<FocusedI
     let hb = node.hitbox_id.and_then(|hid| dom.hitbox_store.get(hid))?;
     let layout = &node.final_layout;
     let content_box = layout.content_box_bounds();
+    let bounds = hb.window_aabb();
     Some(FocusedInputLayoutMeta {
-        taffy_x: hb.bounds.x,
-        taffy_y: hb.bounds.y,
+        taffy_x: bounds.x,
+        taffy_y: bounds.y,
         content_x: content_box.x as f32,
         content_y: content_box.y as f32,
         multiline: is.multiline,

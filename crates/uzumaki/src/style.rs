@@ -76,6 +76,23 @@ pub struct Bounds {
     pub height: f64,
 }
 
+impl From<Bounds> for vello::kurbo::Rect {
+    fn from(bounds: Bounds) -> Self {
+        Self::from_origin_size((bounds.x, bounds.y), (bounds.width, bounds.height))
+    }
+}
+
+impl From<vello::kurbo::Rect> for Bounds {
+    fn from(rect: vello::kurbo::Rect) -> Self {
+        Self {
+            x: rect.x0,
+            y: rect.y0,
+            width: rect.width(),
+            height: rect.height(),
+        }
+    }
+}
+
 impl Bounds {
     pub fn new(x: f64, y: f64, width: f64, height: f64) -> Self {
         Self {
@@ -88,21 +105,6 @@ impl Bounds {
 
     pub fn contains(&self, px: f64, py: f64) -> bool {
         px >= self.x && px <= self.x + self.width && py >= self.y && py <= self.y + self.height
-    }
-
-    pub fn to_rect(&self) -> Rect {
-        Rect::new(self.x, self.y, self.x + self.width, self.y + self.height)
-    }
-
-    /// Inset by an `Edges` (e.g. `style.padding`) to produce the inner box.
-    /// Width/height clamp at zero.
-    pub fn inset_by(&self, edges: &Edges) -> Bounds {
-        Bounds::new(
-            self.x + edges.left as f64,
-            self.y + edges.top as f64,
-            (self.width - edges.horizontal() as f64).max(0.0),
-            (self.height - edges.vertical() as f64).max(0.0),
-        )
     }
 }
 
@@ -866,7 +868,7 @@ impl UzStyle {
                     transform,
                     vbg,
                     None,
-                    &bounds.to_rect(),
+                    &Rect::from(bounds),
                 );
             }
         }
@@ -926,7 +928,7 @@ impl UzStyle {
             let shape = rounded_rect(outer, &grown);
             scene.stroke(&stroke, transform, color, None, &shape);
         } else {
-            scene.stroke(&stroke, transform, color, None, &outer.to_rect());
+            scene.stroke(&stroke, transform, color, None, &Rect::from(outer));
         }
     }
 
@@ -961,7 +963,7 @@ impl UzStyle {
                 transform,
                 vc,
                 None,
-                &expanded.to_rect(),
+                &Rect::from(expanded),
             );
         }
     }
@@ -1101,7 +1103,7 @@ fn rounded_rect(bounds: Bounds, radii: &Corners) -> RoundedRect {
     let w = bounds.width;
     let h = bounds.height;
     let clamp = |r: f32| r.max(0.0).min(w as f32 * 0.5).min(h as f32 * 0.5);
-    let rect = bounds.to_rect();
+    let rect = bounds.into();
     let rr = RoundedRectRadii::new(
         clamp(radii.top_left) as f64,
         clamp(radii.top_right) as f64,
