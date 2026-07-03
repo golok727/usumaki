@@ -7,9 +7,10 @@ use bitflags::bitflags;
 use refineable::Refineable;
 
 use crate::cursor::UzCursorIcon;
-use crate::element::{ElementNode, ImageNode, TextContent};
+use crate::element::{ElementKind, ElementNode, ImageNode, TextContent};
 use crate::input::InputState;
 use crate::interactivity::{HitboxId, Interactivity, StyleSlot};
+use crate::prop_keys::AttrValue;
 use crate::style::{Outline, TextSelectable, UzStyle, UzStyleRefinement};
 
 pub type UzNodeId = usize;
@@ -28,6 +29,7 @@ bitflags! {
     pub struct NodeFlags: u8 {
         const ANONYMOUS = 1 << 0;
         const INLINE_ROOT = 1 << 1;
+        const EDIT_CONTEXT_ROOT = 1 << 2;
     }
 }
 
@@ -42,6 +44,10 @@ impl NodeFlags {
 
     pub fn is_inline_root(self) -> bool {
         self.contains(Self::INLINE_ROOT)
+    }
+
+    pub fn is_edit_context_root(self) -> bool {
+        self.contains(Self::EDIT_CONTEXT_ROOT)
     }
 }
 
@@ -357,6 +363,50 @@ impl Node {
 
     pub fn is_anonymous(&self) -> bool {
         self.flags.is_anonymous()
+    }
+
+    pub fn is_edit_context_root(&self) -> bool {
+        self.flags.is_edit_context_root()
+    }
+
+    pub(crate) fn set_attr(&mut self, name: &str, value: AttrValue<'_>) {
+        if name == "editContext" {
+            self.set_edit_context(value.parse_bool());
+            return;
+        }
+        if let Some(el) = self.as_element_mut() {
+            el.set_attr(name, value);
+        }
+    }
+
+    pub(crate) fn clear_attr(&mut self, name: &str) {
+        if name == "editContext" {
+            self.set_edit_context(false);
+            return;
+        }
+        if let Some(el) = self.as_element_mut() {
+            el.clear_attr(name);
+        }
+    }
+
+    fn set_edit_context(&mut self, enabled: bool) {
+        let is_view = matches!(self.as_element().map(|e| e.kind), Some(ElementKind::View));
+        if !is_view {
+            return;
+        }
+        if enabled {
+            self.flags.insert(NodeFlags::EDIT_CONTEXT_ROOT);
+            self.style_slot(StyleSlot::Base).text_selectable = Some(TextSelectable::True);
+            if let Some(el) = self.as_element_mut() {
+                el.set_focussable(true);
+            }
+        } else {
+            self.flags.remove(NodeFlags::EDIT_CONTEXT_ROOT);
+            self.style_slot(StyleSlot::Base).text_selectable = None;
+            if let Some(el) = self.as_element_mut() {
+                el.set_focussable(false);
+            }
+        }
     }
 }
 

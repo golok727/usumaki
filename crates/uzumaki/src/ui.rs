@@ -3,7 +3,7 @@ use slab::Slab;
 use crate::{
     cursor::UzCursorIcon,
     element::{ElementNode, ImageData, ImageNode, TextContent, TextRunEntry, TextSelectRun},
-    input::InputState,
+    input::{CaretBlink, InputState},
     interactivity::{HitTestState, HitboxStore},
     layout::TaffyLayoutExt,
     node::{Node, ScrollAxis, TextNode, UzNodeId},
@@ -97,6 +97,7 @@ pub struct UIState {
     /// Current text selection within a textSelect view. `root == None` means
     /// there is no active view selection
     pub text_selection: TextSelection,
+    pub caret_blink: CaretBlink,
     // TODO move this to renderer ?
     /// Text runs for textSelect subtrees, rebuilt each frame.
     pub selectable_text_runs: Vec<TextSelectRun>,
@@ -138,6 +139,7 @@ impl UIState {
             drag_mode: DragMode::None,
             wheel_capture: None,
             text_selection: TextSelection::default(),
+            caret_blink: CaretBlink::new(),
             hit_tree_dirty: true,
             selectable_text_runs: Vec::new(),
             layout_dirty: true,
@@ -147,6 +149,23 @@ impl UIState {
 
     pub fn has_focused_node(&self) -> bool {
         self.focused_node.is_some()
+    }
+
+    pub fn focused_edit_context_root(&self) -> Option<UzNodeId> {
+        let fid = self.focused_node?;
+        self.nodes
+            .get(fid)
+            .filter(|node| node.is_edit_context_root())
+            .map(|_| fid)
+    }
+
+    pub fn next_caret_blink_in(&self, window_focused: bool) -> Option<std::time::Duration> {
+        let fid = self.focused_node?;
+        let node = self.nodes.get(fid)?;
+        if node.is_text_input() || node.is_edit_context_root() {
+            return self.caret_blink.next_toggle_in(true, window_focused);
+        }
+        None
     }
 
     /// Flag that geometry may have changed, so the next `compute_layout` runs

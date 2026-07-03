@@ -17,6 +17,8 @@ use crate::text::{LEAF_BRUSH_ID, TextBrush, TextRenderer};
 use crate::ui::UIState;
 
 const SELECTION_COLOR: VelloColor = VelloColor::from_rgba8(56, 121, 185, 128);
+const CARET_COLOR: VelloColor = VelloColor::from_rgba8(226, 165, 46, 255);
+const CARET_WIDTH: f64 = 2.0;
 
 /// View-selection state resolved once per frame and threaded through paint.
 /// `ranges` maps a text node to its selected byte range; `empty` holds
@@ -26,6 +28,13 @@ const SELECTION_COLOR: VelloColor = VelloColor::from_rgba8(56, 121, 185, 128);
 struct SelectionPaint {
     ranges: HashMap<UzNodeId, (usize, usize)>,
     empty: HashSet<UzNodeId>,
+}
+
+#[derive(Clone, Copy)]
+struct CaretPaint {
+    layout_node_id: UzNodeId,
+    byte_in_layout: usize,
+    affinity: crate::selection::Affinity,
 }
 
 pub struct Painter<'a> {
@@ -49,6 +58,7 @@ impl<'a> Painter<'a> {
         // layout, and the text-select runs are all refreshed before paint.
         // Here we only consume current state to draw.
         let selection = self.compute_selection_paint();
+        let caret = self.compute_caret_paint();
 
         let Some(root) = self.dom.root else {
             return;
@@ -62,6 +72,7 @@ impl<'a> Painter<'a> {
             Affine::IDENTITY,
             scene,
             &selection,
+            caret.as_ref(),
         );
     }
 
@@ -75,6 +86,7 @@ impl<'a> Painter<'a> {
         parent_hit_transform: Affine,
         scene: &mut Scene,
         selection: &SelectionPaint,
+        caret: Option<&CaretPaint>,
     ) {
         let dom = self.dom;
         let Some(node_ref) = dom.nodes.get(node_id) else {
@@ -111,6 +123,7 @@ impl<'a> Painter<'a> {
             transform,
             scene,
             selection,
+            caret,
         );
 
         let view_scroll = self.prepare_view_scroll(
@@ -159,6 +172,7 @@ impl<'a> Painter<'a> {
                 child_hit_transform,
                 scene,
                 selection,
+                caret,
             );
         }
 
@@ -191,14 +205,19 @@ impl<'a> Painter<'a> {
         transform: Affine,
         scene: &mut Scene,
         selection: &SelectionPaint,
+        caret: Option<&CaretPaint>,
     ) {
         let node = &self.dom.nodes[node_id];
         if let Some(state) = node.as_text_input() {
+            let focused = self.dom.focused_node == Some(node_id);
             let view = InputView {
                 state,
                 text_style: &style.text,
-                focused: self.dom.focused_node == Some(node_id),
-                window_focused: self.dom.window_focused,
+                focused,
+                caret_visible: self
+                    .dom
+                    .caret_blink
+                    .visible(focused, self.dom.window_focused),
                 scroll_offset_x: node.scroll_state.scroll_offset_x,
                 scroll_offset_y: node.scroll_state.scroll_offset_y,
             };
@@ -258,6 +277,9 @@ impl<'a> Painter<'a> {
             } else {
                 selection.ranges.get(&node_id).copied()
             };
+            let caret_byte = caret
+                .filter(|c| c.layout_node_id == node_id)
+                .map(|c| (c.byte_in_layout, c.affinity));
             self.paint_text_node(
                 scene,
                 bounds,
@@ -268,6 +290,7 @@ impl<'a> Painter<'a> {
                 transform,
                 sel,
                 is_inline_root,
+                caret_byte,
             );
         } else {
             crate::paint::view::paint_view(scene, bounds, style, transform, |_| {});
@@ -325,6 +348,7 @@ impl<'a> Painter<'a> {
         transform: Affine,
         selection: Option<(usize, usize)>,
         is_inline_root: bool,
+        caret: Option<(usize, crate::selection::Affinity)>,
     ) {
         style.paint(bounds, scene, transform, |scene| {
             let text_x = content_box.x;
@@ -371,6 +395,25 @@ impl<'a> Painter<'a> {
                         .unwrap_or(parent_color)
                 },
             );
+
+            if let Some((byte, affinity)) = caret {
+                let geom = crate::text::caret_geometry_from_layout(
+                    layout,
+                    text_len,
+                    byte,
+                    CARET_WIDTH as f32,
+                    affinity,
+                );
+                let cx = text_x + geom.x0;
+                let cy = text_y + geom.y0;
+                scene.fill(
+                    Fill::NonZero,
+                    transform,
+                    CARET_COLOR,
+                    None,
+                    &Rect::new(cx, cy, cx + CARET_WIDTH, cy + (geom.y1 - geom.y0)),
+                );
+            }
         });
     }
 
@@ -700,6 +743,28 @@ impl<'a> Painter<'a> {
             }
         }
         Some((range_start?, range_end?))
+    }
+
+    fn compute_caret_paint(&self) -> Option<CaretPaint> {
+        let focus = self.dom.text_selection.focus?;
+        let (run, entry) = self.dom.find_run_entry_for_node(focus.node)?;
+        let root = self.dom.nodes.get(run.root_id)?;
+        if !root.is_edit_context_root() {
+            return None;
+        }
+        let focused = self.dom.focused_node == Some(run.root_id);
+        if !self
+            .dom
+            .caret_blink
+            .visible(focused, self.dom.window_focused)
+        {
+            return None;
+        }
+        Some(CaretPaint {
+            layout_node_id: entry.layout_node_id,
+            byte_in_layout: entry.flat_byte_start + focus.offset.min(entry.byte_len),
+            affinity: focus.affinity,
+        })
     }
 
     fn compute_selection_paint(&self) -> SelectionPaint {

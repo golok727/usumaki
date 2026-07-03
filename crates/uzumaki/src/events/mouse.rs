@@ -721,22 +721,12 @@ pub fn handle_mouse_input(
                                 4 => is.select_all(renderer),
                                 _ => is.move_to_point(relative_x, relative_y, renderer),
                             }
-                            is.reset_blink();
                         }
                     }
 
                     scroll_input_to_cursor(dom, handle);
                     dom.drag_mode = DragMode::InputSelection(nid);
                 } else {
-                    // Clicked non-input: blur focused input
-                    if let Some(old_id) = old_focus {
-                        dom.focused_node = None;
-                        events.push(AppEvent::Blur(UzFocusEvent {
-                            window_id: wid,
-                            node_id: old_id,
-                        }));
-                    }
-
                     // Selection starts if the click landed anywhere inside a
                     // text-selectable scope — on a text node, on the
                     // container itself, or on any non-text descendant. This
@@ -745,16 +735,29 @@ pub fn handle_mouse_input(
                     let run_root_for_click =
                         target_node.and_then(|nid| dom.containing_text_run_root(nid));
 
-                    if let Some(run_root) = run_root_for_click {
-                        let nid = target_node.unwrap();
-
-                        // Starting a view selection blurs any focused input
-                        if let Some(old_id) = dom.focused_node.take() {
+                    let new_focus = run_root_for_click.filter(|&run_root| {
+                        dom.nodes
+                            .get(run_root)
+                            .is_some_and(|n| n.is_edit_context_root())
+                    });
+                    if old_focus != new_focus {
+                        if let Some(old_id) = old_focus {
                             events.push(AppEvent::Blur(UzFocusEvent {
                                 window_id: wid,
                                 node_id: old_id,
                             }));
                         }
+                        if let Some(new_id) = new_focus {
+                            events.push(AppEvent::Focus(UzFocusEvent {
+                                window_id: wid,
+                                node_id: new_id,
+                            }));
+                        }
+                        dom.focused_node = new_focus;
+                    }
+
+                    if let Some(run_root) = run_root_for_click {
+                        let nid = target_node.unwrap();
 
                         if let Some(hit) =
                             hit_text_in_run(dom, &mut handle.text_renderer, run_root, mx, my)
@@ -864,12 +867,9 @@ pub fn handle_mouse_input(
                     && let Some(checked) = node.as_checkbox_input_mut()
                 {
                     *checked = !*checked;
-                    events.push(AppEvent::Input(UzInputEvent {
-                        window_id: wid,
-                        node_id: active,
-                        input_type: "toggle".to_string(),
-                        data: None,
-                    }));
+                    events.push(AppEvent::Input(UzInputEvent::plain(
+                        wid, active, "toggle", None,
+                    )));
                 }
                 if let Some(target) = target_node {
                     let (local_x, local_y) = local_offset(dom, target, x, y);

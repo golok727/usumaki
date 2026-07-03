@@ -162,6 +162,7 @@ declare module 'uzumaki' {
     Copy = 25,
     Cut = 26,
     Paste = 27,
+    TextUpdate = 28,
   }
   declare const enum EventPhase {
     None = 0,
@@ -281,6 +282,12 @@ declare module 'uzumaki' {
      * stop the edit from committing. Bubbles.
      */
     beforeinput: UzInputEvent;
+    /**
+     * Edit a keypress would have applied to an `editContext` view. The framework
+     * does not mutate the view; the handler must update its own text buffer and
+     * re-render. Mirrors the web EditContext API's `textupdate` event. Bubbles.
+     */
+    textupdate: UzInputEvent;
     /**
      * The value was committed: fires on blur for a text input whose value differs
      * from when it was focused, and immediately when a checkbox toggles. Pairs
@@ -452,8 +459,38 @@ declare module 'uzumaki' {
     get checked(): boolean;
   }
   //#endregion
+  //#region js/range.d.ts
+  /**
+   * Detached span of text. Holds a start/end endpoint pair without being tied
+   * to the active selection. Pass one to `Selection.setRange` to apply it,
+   * or read the current selection out as a `Range` via `Selection.getRange`.
+   *
+   * Endpoints are `(node, offset)` where `offset` is a byte offset within a
+   * text leaf, matching how the runtime stores selection internally.
+   */
+  declare class Range {
+    private readonly _window;
+    get window(): Window;
+    get startContainer(): UzNode | null;
+    get startOffset(): number;
+    get endContainer(): UzNode | null;
+    get endOffset(): number;
+    get collapsed(): boolean;
+    get isValid(): boolean;
+    setStart(node: UzNode, offset: number): void;
+    setEnd(node: UzNode, offset: number): void;
+    /**
+     * Cover all text inside `container`, from the first text leaf (offset 0)
+     * to the end of the last. No-op when the container has no text
+     * descendants.
+     */
+    selectNodeContents(container: UzNode): void;
+    collapse(toStart?: boolean): void;
+    private _assertOwnsNode;
+  }
+  //#endregion
   //#region js/selection.d.ts
-  /** Shape accepted by `Selection.set` — node plus grapheme offset. */
+  /** Shape accepted by `Selection.set`: a node plus grapheme offset. */
   interface UzSelectionEndpointInit {
     node: UzNode;
     offset: number;
@@ -475,6 +512,21 @@ declare module 'uzumaki' {
     extend(node: UzNode, offset: number): void;
     set(anchor: UzSelectionEndpointInit, focus?: UzSelectionEndpointInit): void;
     empty(): void;
+    /**
+     * Replace the selection with all text inside `container`. Equivalent to
+     * `setRange(window.createRange().selectNodeContents(container))`.
+     */
+    selectAll(container: UzNode): void;
+    /**
+     * Snapshot the current selection as a detached `Range`. Returns `null`
+     * when there is no active selection.
+     */
+    getRange(): Range | null;
+    /**
+     * Apply a `Range` as the active selection. The range's start becomes the
+     * anchor and the end becomes the focus.
+     */
+    setRange(range: Range): void;
     private _emit;
   }
   //#endregion
@@ -571,6 +623,8 @@ declare module 'uzumaki' {
      * or `empty`. Programmatic mutations dispatch `selectionchange`.
      */
     getSelection(): Selection;
+    /** Construct an empty {@link Range} bound to this window. */
+    createRange(): Range;
     get isDisposed(): boolean;
     get remBase(): number;
     set remBase(value: number);
@@ -633,6 +687,7 @@ declare module 'uzumaki' {
     EventPhase,
     EventType,
     RUNTIME_VERSION,
+    Range,
     Selection,
     UzButtonElement,
     UzCheckboxElement,

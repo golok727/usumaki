@@ -45,6 +45,7 @@ interface ElementStyles {
   items?: 'start' | 'end' | 'center' | 'stretch' | 'baseline';
   justify?: 'start' | 'end' | 'center' | 'between' | 'around' | 'evenly';
   gap?: number | string;
+  editContext?: boolean;
   bg?: string;
   color?: string;
   fontSize?: number | string;

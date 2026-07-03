@@ -20,6 +20,7 @@ export const enum EventType {
   Copy = 25,
   Cut = 26,
   Paste = 27,
+  TextUpdate = 28,
 }
 
 export const enum EventPhase {
@@ -83,6 +84,16 @@ export interface UzInputEvent<
   readonly inputType: string;
   /** The inserted text, or `null` for deletions and history edits. */
   readonly data: string | null;
+  /**
+   * Start of the range this edit replaces, in tree coordinates. Populated on
+   * `textupdate` fired by an `editContext` view; `null` on regular input
+   * events. `endNode`/`endOffset` mark the other bound. When start and end
+   * are equal the edit is an insertion at a caret point.
+   */
+  readonly startNode: UzNode | null;
+  readonly startOffset: number;
+  readonly endNode: UzNode | null;
+  readonly endOffset: number;
 }
 
 export interface UzFocusEvent<
@@ -160,6 +171,12 @@ export interface UzEventMap {
    */
   beforeinput: UzInputEvent;
   /**
+   * Edit a keypress would have applied to an `editContext` view. The framework
+   * does not mutate the view; the handler must update its own text buffer and
+   * re-render. Mirrors the web EditContext API's `textupdate` event. Bubbles.
+   */
+  textupdate: UzInputEvent;
+  /**
    * The value was committed: fires on blur for a text input whose value differs
    * from when it was focused, and immediately when a checkbox toggles. Pairs
    * with the live `input`/`valuechange` events. Bubbles.
@@ -211,6 +228,7 @@ export const EVENT_NAME_TO_TYPE: Record<string, EventType> = {
   keyup: EventType.KeyUp,
   input: EventType.Input,
   beforeinput: EventType.BeforeInput,
+  textupdate: EventType.TextUpdate,
   commit: EventType.Commit,
   focus: EventType.Focus,
   blur: EventType.Blur,
@@ -232,6 +250,7 @@ export const EVENT_TYPE_TO_NAME: Record<number, EventName> = {
   [EventType.KeyUp]: 'keyup',
   [EventType.Input]: 'input',
   [EventType.BeforeInput]: 'beforeinput',
+  [EventType.TextUpdate]: 'textupdate',
   [EventType.Commit]: 'commit',
   [EventType.Focus]: 'focus',
   [EventType.Blur]: 'blur',
@@ -259,6 +278,7 @@ function isInputType(t: EventType): boolean {
   return (
     t === EventType.Input ||
     t === EventType.BeforeInput ||
+    t === EventType.TextUpdate ||
     t === EventType.Commit
   );
 }
@@ -405,6 +425,10 @@ export function buildDomEvent(
       value: payload?.value ?? '',
       inputType: payload?.inputType ?? '',
       data: payload?.data ?? null,
+      startNode: payload?.startNode ?? null,
+      startOffset: payload?.startOffset ?? 0,
+      endNode: payload?.endNode ?? null,
+      endOffset: payload?.endOffset ?? 0,
     }) as UzInputEvent;
   }
 

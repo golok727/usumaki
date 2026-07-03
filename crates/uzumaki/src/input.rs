@@ -127,10 +127,58 @@ impl DeleteAction {
     }
 }
 
+pub struct CaretBlink {
+    pub reset: Instant,
+}
+
+impl Default for CaretBlink {
+    fn default() -> Self {
+        Self {
+            reset: Instant::now(),
+        }
+    }
+}
+
+impl CaretBlink {
+    const ON_MS: u128 = 530;
+    const CYCLE_MS: u128 = 1060;
+
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn reset(&mut self) {
+        self.reset = Instant::now();
+    }
+
+    pub fn visible(&self, focused: bool, window_focused: bool) -> bool {
+        if !focused || !window_focused {
+            return false;
+        }
+        self.phase_elapsed_ms() < Self::ON_MS
+    }
+
+    pub fn next_toggle_in(&self, focused: bool, window_focused: bool) -> Option<Duration> {
+        if !focused || !window_focused {
+            return None;
+        }
+        let elapsed = self.phase_elapsed_ms();
+        let remaining = if elapsed < Self::ON_MS {
+            Self::ON_MS - elapsed
+        } else {
+            Self::CYCLE_MS - elapsed
+        };
+        Some(Duration::from_millis(remaining.max(1) as u64))
+    }
+
+    fn phase_elapsed_ms(&self) -> u128 {
+        self.reset.elapsed().as_millis() % Self::CYCLE_MS
+    }
+}
+
 pub struct InputState {
     pub editor: PlainEditor<TextBrush>,
     pub placeholder: String,
-    pub blink_reset: Instant,
     pub disabled: bool,
     pub secure: bool,
     pub multiline: bool,
@@ -154,14 +202,10 @@ impl InputState {
         EDITOR_OVERHEAD + self.text().len() + self.placeholder.capacity()
     }
 
-    const BLINK_ON_MS: u128 = 530;
-    const BLINK_CYCLE_MS: u128 = 1060;
-
     pub fn new() -> Self {
         Self {
             editor: PlainEditor::new(16.0),
             placeholder: String::new(),
-            blink_reset: Instant::now(),
             disabled: false,
             secure: false,
             multiline: true,
@@ -247,7 +291,6 @@ impl InputState {
         {
             self.push_history(change, kind, inserted_for_batching);
         }
-        self.reset_blink();
         Some(())
     }
 
@@ -387,7 +430,6 @@ impl InputState {
         self.apply_change(&change, true, renderer);
         self.history.redo_stack.push(change);
         self.history.reset_batching();
-        self.reset_blink();
         Some(EditEvent {
             kind: EditKind::HistoryUndo,
             inserted: None,
@@ -402,7 +444,6 @@ impl InputState {
         self.apply_change(&change, false, renderer);
         self.history.undo_stack.push_back(change);
         self.history.reset_batching();
-        self.reset_blink();
         Some(EditEvent {
             kind: EditKind::HistoryRedo,
             inserted: None,
@@ -535,7 +576,6 @@ impl InputState {
             (MoveAction::TextEnd, false) => d.move_to_text_end(),
             (MoveAction::TextEnd, true) => d.select_to_text_end(),
         });
-        self.reset_blink();
     }
 
     pub fn move_left(&mut self, extend: bool, renderer: &mut TextRenderer) {
@@ -572,7 +612,6 @@ impl InputState {
     pub fn move_to_point(&mut self, x: f32, y: f32, renderer: &mut TextRenderer) {
         self.break_undo_batch();
         self.drive(renderer, |d| d.move_to_point(x, y));
-        self.reset_blink();
     }
 
     pub fn extend_selection_to_point(&mut self, x: f32, y: f32, renderer: &mut TextRenderer) {
@@ -582,19 +621,16 @@ impl InputState {
     pub fn select_word_at_point(&mut self, x: f32, y: f32, renderer: &mut TextRenderer) {
         self.break_undo_batch();
         self.drive(renderer, |d| d.select_word_at_point(x, y));
-        self.reset_blink();
     }
 
     pub fn select_line_at_point(&mut self, x: f32, y: f32, renderer: &mut TextRenderer) {
         self.break_undo_batch();
         self.drive(renderer, |d| d.select_line_at_point(x, y));
-        self.reset_blink();
     }
 
     pub fn select_all(&mut self, renderer: &mut TextRenderer) {
         self.break_undo_batch();
         self.drive(renderer, |d| d.select_all());
-        self.reset_blink();
     }
 
     // Ime
@@ -637,34 +673,6 @@ impl InputState {
         self.editor.set_scale(scale);
     }
 
-    pub fn reset_blink(&mut self) {
-        self.blink_reset = Instant::now();
-    }
-
-    pub fn blink_visible(&self, focused: bool, window_focused: bool) -> bool {
-        if !focused || !window_focused {
-            return false;
-        }
-        self.blink_phase_elapsed_ms() < Self::BLINK_ON_MS
-    }
-
-    pub fn next_blink_toggle_in(&self, focused: bool, window_focused: bool) -> Option<Duration> {
-        if !focused || !window_focused {
-            return None;
-        }
-        let elapsed = self.blink_phase_elapsed_ms();
-        let remaining = if elapsed < Self::BLINK_ON_MS {
-            Self::BLINK_ON_MS - elapsed
-        } else {
-            Self::BLINK_CYCLE_MS - elapsed
-        };
-        Some(Duration::from_millis(remaining.max(1) as u64))
-    }
-
-    fn blink_phase_elapsed_ms(&self) -> u128 {
-        self.blink_reset.elapsed().as_millis() % Self::BLINK_CYCLE_MS
-    }
-
     /// Classify the edit a key would produce without applying it, so a
     /// cancelable `beforeinput` can be dispatched first. Mirrors the
     /// edit-producing branches of [`handle_key`](Self::handle_key); returns
@@ -674,48 +682,59 @@ impl InputState {
         key: &Key,
         modifiers: crate::events::KeyModifiers,
     ) -> Option<(EditKind, Option<String>)> {
-        use crate::events::KeyModifiers;
         if self.disabled {
             return None;
         }
-
-        let shift = modifiers.contains(KeyModifiers::SHIFT);
-        let ctrl = modifiers.contains(KeyModifiers::CTRL);
-
-        match key {
-            Key::Character(ch) => {
-                if ctrl {
-                    return match () {
-                        _ if ch.eq_ignore_ascii_case("z") && !shift => {
-                            Some((EditKind::HistoryUndo, None))
-                        }
-                        _ if (ch.eq_ignore_ascii_case("z") && shift)
-                            || ch.eq_ignore_ascii_case("y") =>
-                        {
-                            Some((EditKind::HistoryRedo, None))
-                        }
-                        _ => None,
-                    };
-                }
-                Some((EditKind::Insert, Some(ch.to_string())))
-            }
-            Key::Named(named) => match named {
-                NamedKey::Backspace if ctrl => Some((EditKind::DeleteWordBackward, None)),
-                NamedKey::Backspace => Some((EditKind::DeleteBackward, None)),
-                NamedKey::Delete if ctrl => Some((EditKind::DeleteWordForward, None)),
-                NamedKey::Delete => Some((EditKind::DeleteForward, None)),
-                NamedKey::Undo => Some((EditKind::HistoryUndo, None)),
-                NamedKey::Redo => Some((EditKind::HistoryRedo, None)),
-                NamedKey::Space => Some((EditKind::Insert, Some(" ".to_string()))),
-                NamedKey::Enter if self.multiline => {
-                    Some((EditKind::Insert, Some("\n".to_string())))
-                }
-                _ => None,
-            },
-            _ => None,
-        }
+        preview_key_edit(key, modifiers, self.multiline)
     }
+}
 
+/// Classify the edit a key would produce, independent of any editor state.
+/// Used by inputs (via [`InputState::preview_edit`]) and by editContext views
+/// to decide what `beforeinput`/`input` payload to emit.
+pub fn preview_key_edit(
+    key: &Key,
+    modifiers: crate::events::KeyModifiers,
+    multiline: bool,
+) -> Option<(EditKind, Option<String>)> {
+    use crate::events::KeyModifiers;
+
+    let shift = modifiers.contains(KeyModifiers::SHIFT);
+    let ctrl = modifiers.contains(KeyModifiers::CTRL);
+
+    match key {
+        Key::Character(ch) => {
+            if ctrl {
+                return match () {
+                    _ if ch.eq_ignore_ascii_case("z") && !shift => {
+                        Some((EditKind::HistoryUndo, None))
+                    }
+                    _ if (ch.eq_ignore_ascii_case("z") && shift)
+                        || ch.eq_ignore_ascii_case("y") =>
+                    {
+                        Some((EditKind::HistoryRedo, None))
+                    }
+                    _ => None,
+                };
+            }
+            Some((EditKind::Insert, Some(ch.to_string())))
+        }
+        Key::Named(named) => match named {
+            NamedKey::Backspace if ctrl => Some((EditKind::DeleteWordBackward, None)),
+            NamedKey::Backspace => Some((EditKind::DeleteBackward, None)),
+            NamedKey::Delete if ctrl => Some((EditKind::DeleteWordForward, None)),
+            NamedKey::Delete => Some((EditKind::DeleteForward, None)),
+            NamedKey::Undo => Some((EditKind::HistoryUndo, None)),
+            NamedKey::Redo => Some((EditKind::HistoryRedo, None)),
+            NamedKey::Space => Some((EditKind::Insert, Some(" ".to_string()))),
+            NamedKey::Enter if multiline => Some((EditKind::Insert, Some("\n".to_string()))),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+impl InputState {
     /// Apply an edit previously classified by [`preview_edit`](Self::preview_edit).
     fn apply_edit(
         &mut self,
@@ -963,35 +982,27 @@ mod tests {
 
     #[test]
     fn blink_not_visible_unfocused() {
-        let is = InputState::new();
-        assert!(!is.blink_visible(false, true));
-    }
-
-    #[test]
-    fn blink_not_visible_window_unfocused() {
-        let is = InputState::new();
-        assert!(!is.blink_visible(true, false));
-    }
-
-    #[test]
-    fn next_blink_toggle_is_absent_when_unfocused() {
-        let is = InputState::new();
-        assert!(is.next_blink_toggle_in(false, true).is_none());
+        let blink = CaretBlink::new();
+        assert!(!blink.visible(false, true));
+        assert!(!blink.visible(true, false));
+        assert!(blink.next_toggle_in(false, true).is_none());
     }
 
     #[test]
     fn next_blink_toggle_matches_visible_phase() {
-        let mut is = InputState::new();
-        is.blink_reset = Instant::now() - Duration::from_millis(200);
-        let next = is.next_blink_toggle_in(true, true).unwrap();
+        let blink = CaretBlink {
+            reset: Instant::now() - Duration::from_millis(200),
+        };
+        let next = blink.next_toggle_in(true, true).unwrap();
         assert!((329..=330).contains(&next.as_millis()));
     }
 
     #[test]
     fn next_blink_toggle_matches_hidden_phase() {
-        let mut is = InputState::new();
-        is.blink_reset = Instant::now() - Duration::from_millis(700);
-        let next = is.next_blink_toggle_in(true, true).unwrap();
+        let blink = CaretBlink {
+            reset: Instant::now() - Duration::from_millis(700),
+        };
+        let next = blink.next_toggle_in(true, true).unwrap();
         assert!((359..=360).contains(&next.as_millis()));
     }
 

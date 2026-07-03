@@ -213,10 +213,8 @@ impl JsWindow {
         let kind = AttributeKind::parse(name);
         match kind {
             AttributeKind::Element(name) => {
-                if let Some(node) = self.dom.nodes.get_mut(node_id)
-                    && let Some(el) = node.as_element_mut()
-                {
-                    el.set_attr(name, AttrValue::from(value));
+                if let Some(node) = self.dom.nodes.get_mut(node_id) {
+                    node.set_attr(name, AttrValue::from(value));
                 }
             }
             AttributeKind::Style(prop, variant) => {
@@ -243,9 +241,7 @@ impl JsWindow {
 
         match kind {
             AttributeKind::Element(name) => {
-                if let Some(el) = node.as_element_mut() {
-                    el.clear_attr(name);
-                }
+                node.clear_attr(name);
             }
             AttributeKind::Style(prop, variant) => {
                 clear_node_style(&mut self.dom, node_id, prop, variant)
@@ -598,6 +594,7 @@ const ET_INPUT: f64 = 20.0;
 const ET_FOCUS: f64 = 21.0;
 const ET_BLUR: f64 = 22.0;
 const ET_BEFORE_INPUT: f64 = 23.0;
+const ET_TEXT_UPDATE: f64 = 28.0;
 const ET_COPY: f64 = 25.0;
 const ET_CUT: f64 = 26.0;
 const ET_PASTE: f64 = 27.0;
@@ -647,6 +644,7 @@ impl JSGlobalEventDispatch {
             ),
             AppEvent::Input(e) => (&self.input, input_args(scope, ET_INPUT, e)),
             AppEvent::BeforeInput(e) => (&self.input, input_args(scope, ET_BEFORE_INPUT, e)),
+            AppEvent::TextUpdate(e) => (&self.input, input_args(scope, ET_TEXT_UPDATE, e)),
             AppEvent::Focus(e) => (&self.focus, focus_args(scope, ET_FOCUS, e)),
             AppEvent::Blur(e) => (&self.focus, focus_args(scope, ET_BLUR, e)),
             AppEvent::Copy(e) => (&self.clipboard, clipboard_args(scope, ET_COPY, e)),
@@ -787,8 +785,12 @@ fn input_args<'s>(
         v_num(scope, ty),
         v_num(scope, e.window_id as f64),
         v_node(scope, e.node_id),
-        v_str(scope, &e.input_type),
+        v_str(scope, e.input_type),
         v_opt_str(scope, &e.data),
+        v_opt_node(scope, e.start_node_id),
+        v_num(scope, e.start_offset as f64),
+        v_opt_node(scope, e.end_node_id),
+        v_num(scope, e.end_offset as f64),
     ]
 }
 
@@ -1048,12 +1050,23 @@ fn handle_window_event(
                                     );
                                 let (button_redraw, button_events) =
                                     events::handle_key_for_button(&mut entry.dom, wid, &key_event);
+                                let edit_context_events = if input_prevented {
+                                    Vec::new()
+                                } else {
+                                    events::handle_key_for_edit_context(
+                                        &mut entry.dom,
+                                        wid,
+                                        &key_event,
+                                        modifiers,
+                                    )
+                                };
                                 if redraw || checkbox_redraw || button_redraw {
                                     needs_redraw = true;
                                 }
                                 let mut all = events;
                                 all.extend(checkbox_events);
                                 all.extend(button_events);
+                                all.extend(edit_context_events);
                                 all
                             })
                         });
@@ -1109,12 +1122,8 @@ fn handle_window_event(
                 if let Some(entry) = s.windows.get_mut(&wid) {
                     entry.state.focused = focused;
                     entry.dom.window_focused = focused;
-                    if focused
-                        && let Some(nid) = entry.dom.focused_node
-                        && let Some(node) = entry.dom.nodes.get_mut(nid)
-                        && let Some(is) = node.data.as_text_input_mut()
-                    {
-                        is.reset_blink();
+                    if focused {
+                        entry.dom.caret_blink.reset();
                     }
                     if focused && let Some(window) = entry.window.as_mut() {
                         events::update_ime_cursor_area(&mut entry.dom, window);
@@ -1176,12 +1185,12 @@ fn handle_window_event(
                         let _edit = is.commit_ime_text(&text, &mut window.text_renderer)?;
                         events::update_ime_cursor_area(&mut entry.dom, window);
                         needs_redraw = true;
-                        Some(vec![events::AppEvent::Input(events::UzInputEvent {
-                            window_id: wid,
-                            node_id: fid,
-                            input_type: "insertCompositionText".to_string(),
-                            data: Some(text.clone()),
-                        })])
+                        Some(vec![events::AppEvent::Input(events::UzInputEvent::plain(
+                            wid,
+                            fid,
+                            "insertCompositionText",
+                            Some(text.clone()),
+                        ))])
                     })
                 });
                 if let Some(events) = input_events {
@@ -1283,6 +1292,20 @@ fn handle_window_event(
         _ => {}
     }
 
+    if refresh_blink_timer {
+        with_state(state, |s| {
+            if let Some(entry) = s.windows.get_mut(&wid) {
+                entry.dom.caret_blink.reset();
+            }
+        });
+        refresh_cursor_blink_timer(state, wid);
+        needs_redraw |= with_state_ref(state, |s| {
+            s.windows
+                .get(&wid)
+                .is_some_and(|e| e.dom.next_caret_blink_in(e.dom.window_focused).is_some())
+        });
+    }
+
     if needs_redraw {
         with_state_ref(state, |s| {
             if let Some(entry) = s.windows.get(&wid)
@@ -1291,10 +1314,6 @@ fn handle_window_event(
                 window.request_redraw();
             }
         });
-    }
-
-    if refresh_blink_timer {
-        refresh_cursor_blink_timer(state, wid);
     }
 }
 
@@ -1313,12 +1332,7 @@ fn refresh_cursor_blink_timer(state: &SharedJsState, id: WindowEntryId) {
         entry.cursor_blink_generation = entry.cursor_blink_generation.wrapping_add(1);
         let generation = entry.cursor_blink_generation;
         let focused = entry.dom.window_focused;
-        let next_delay = entry
-            .dom
-            .focused_node
-            .and_then(|focused_id| entry.dom.nodes.get(focused_id))
-            .and_then(|node| node.as_text_input())
-            .and_then(|input| input.next_blink_toggle_in(true, focused));
+        let next_delay = entry.dom.next_caret_blink_in(focused);
         (next_delay.map(|delay| (generation, delay)), proxy)
     });
 
@@ -1346,15 +1360,7 @@ pub fn handle_cursor_blink(state: &SharedJsState, id: WindowEntryId, generation:
         s.windows
             .get(&id)
             .filter(|entry| entry.cursor_blink_generation == generation)
-            .and_then(|entry| {
-                entry
-                    .dom
-                    .focused_node
-                    .and_then(|focused_id| entry.dom.nodes.get(focused_id))
-                    .and_then(|node| node.as_text_input())
-                    .and_then(|input| input.next_blink_toggle_in(true, entry.dom.window_focused))
-                    .map(|_| ())
-            })
+            .and_then(|entry| entry.dom.next_caret_blink_in(entry.dom.window_focused))
             .is_some()
     });
 

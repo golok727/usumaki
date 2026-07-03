@@ -94,7 +94,8 @@ impl HitboxStore {
     ) -> HitboxId {
         let id = HitboxId(self.next_id);
         self.next_id += 1;
-        let bounds = transformed_axis_aligned_bounds(local_bounds, transform);
+        let bounds = transform.transform_rect_bbox(local_bounds.to_rect());
+        let bounds = Bounds::new(bounds.x0, bounds.y0, bounds.width(), bounds.height());
         self.hitboxes.push(Hitbox {
             id,
             node_id,
@@ -143,26 +144,6 @@ impl HitboxStore {
     pub fn hitboxes(&self) -> &[Hitbox] {
         &self.hitboxes
     }
-}
-
-fn transformed_axis_aligned_bounds(bounds: Bounds, transform: Affine) -> Bounds {
-    let points = [
-        transform * Point::new(bounds.x, bounds.y),
-        transform * Point::new(bounds.x + bounds.width, bounds.y),
-        transform * Point::new(bounds.x + bounds.width, bounds.y + bounds.height),
-        transform * Point::new(bounds.x, bounds.y + bounds.height),
-    ];
-
-    let (mut min_x, mut min_y) = (points[0].x, points[0].y);
-    let (mut max_x, mut max_y) = (points[0].x, points[0].y);
-    for point in points.iter().skip(1) {
-        min_x = min_x.min(point.x);
-        min_y = min_y.min(point.y);
-        max_x = max_x.max(point.x);
-        max_y = max_y.max(point.y);
-    }
-
-    Bounds::new(min_x, min_y, max_x - min_x, max_y - min_y)
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]

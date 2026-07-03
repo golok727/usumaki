@@ -547,6 +547,17 @@ pub fn selection_rects_from_layout(
         .collect()
 }
 
+pub fn caret_geometry_from_layout(
+    layout: &Layout<TextBrush>,
+    text_len: usize,
+    byte_index: usize,
+    width: f32,
+    affinity: crate::selection::Affinity,
+) -> BoundingBox {
+    let byte = byte_index.min(text_len);
+    Cursor::from_byte_index(layout, byte, affinity.into()).geometry(layout, width)
+}
+
 pub fn apply_text_style_to_editor(editor: &mut parley::PlainEditor<TextBrush>, style: &TextStyle) {
     let styles = editor.edit_styles();
     for prop in style.to_parley_styles() {
